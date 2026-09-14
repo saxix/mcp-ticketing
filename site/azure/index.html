@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        
+        
+        
+        <link rel="shortcut icon" href="../img/favicon.ico">
+        <title>Azure DevOps - mcp-ticketing</title>
+        <link href="../css/bootstrap.min.css" rel="stylesheet">
+        <link href="../css/fontawesome.min.css" rel="stylesheet">
+        <link href="../css/brands.min.css" rel="stylesheet">
+        <link href="../css/solid.min.css" rel="stylesheet">
+        <link href="../css/v4-font-face.min.css" rel="stylesheet">
+        <link href="../css/base.css" rel="stylesheet">
+        <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" >
+        <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css" disabled>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script>hljs.highlightAll();</script> 
+    </head>
+
+    <body>
+        <div class="navbar fixed-top navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href="..">mcp-ticketing</a>
+                <!-- Expander button -->
+                <button type="button" class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#navbar-collapse" aria-controls="navbar-collapse" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <!-- Expanded navigation -->
+                <div id="navbar-collapse" class="navbar-collapse collapse">
+                        <!-- Main navigation -->
+                        <ul class="nav navbar-nav">
+                            <li class="nav-item">
+                                <a href=".." class="nav-link">Home</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../getting-started/" class="nav-link">Getting Started</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../configuration/" class="nav-link">Configuration</a>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle active" aria-current="page" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Backends</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="./" class="dropdown-item active" aria-current="page">Azure DevOps</a>
+</li>
+                                    
+<li>
+    <a href="../github/" class="dropdown-item">GitHub</a>
+</li>
+                                </ul>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../tools/" class="nav-link">Tools Reference</a>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Integration</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="../opencode/" class="dropdown-item">opencode</a>
+</li>
+                                </ul>
+                            </li>
+                        </ul>
+
+                    <ul class="nav navbar-nav ms-md-auto">
+                        <li class="nav-item">
+                            <a href="#" class="nav-link" data-bs-toggle="modal" data-bs-target="#properdocs_search_modal">
+                                <i class="fa fa-search"></i> Search
+                            </a>
+                        </li>
+                            <li class="nav-item">
+                                <a rel="prev" href="../configuration/" class="nav-link">
+                                    <i class="fa fa-arrow-left"></i> Previous
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a rel="next" href="../github/" class="nav-link">
+                                    Next <i class="fa fa-arrow-right"></i>
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="https://github.com/saxix/mcp-ticketing/edit/master/docs/azure.md" class="nav-link">Edit on saxix/mcp-ticketing
+                                    </a>
+                            </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="row">
+                    <div class="col-md-3"><div class="navbar-expand-md bs-sidebar hidden-print affix" role="complementary">
+    <div class="navbar-header">
+        <button type="button" class="navbar-toggler collapsed" data-bs-toggle="collapse" data-bs-target="#toc-collapse" title="Table of Contents">
+            <span class="fa fa-angle-down"></span>
+        </button>
+    </div>
+
+    
+    <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
+        <ul class="nav flex-column">
+            
+            <li class="nav-item" data-bs-level="1"><a href="#azure-devops" class="nav-link">Azure DevOps</a>
+              <ul class="nav flex-column">
+            <li class="nav-item" data-bs-level="2"><a href="#overview" class="nav-link">Overview</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#credentials" class="nav-link">Credentials</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#tool-mapping" class="nav-link">Tool Mapping</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#link-types" class="nav-link">Link Types</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#state-values" class="nav-link">State Values</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+              </ul>
+            </li>
+        </ul>
+    </div>
+</div></div>
+                    <div class="col-md-9" role="main">
+
+<h1 id="azure-devops">Azure DevOps<a class="headerlink" href="#azure-devops" title="Permanent link">&para;</a></h1>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>The Azure DevOps backend connects to the Azure DevOps REST API (v7.1) to manage work items.</p>
+<h2 id="credentials">Credentials<a class="headerlink" href="#credentials" title="Permanent link">&para;</a></h2>
+<p>Set these environment variables:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">MCP_AZURE_DEVOPS_ORG</span><span class="o">=</span>your-organization-name
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nv">MCP_AZURE_DEVOPS_PROJECT</span><span class="o">=</span>your-project-name
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nv">MCP_AZDO_PAT</span><span class="o">=</span>your-personal-access-token
+</code></pre></div>
+<h3 id="pat-scopes">PAT Scopes<a class="headerlink" href="#pat-scopes" title="Permanent link">&para;</a></h3>
+<p>The Personal Access Token requires <strong>Work Items (Read &amp; Write)</strong> scope.</p>
+<h3 id="api-base-url">API Base URL<a class="headerlink" href="#api-base-url" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>https://dev.azure.com/{org}/{project}/_apis/
+</code></pre></div>
+<h2 id="tool-mapping">Tool Mapping<a class="headerlink" href="#tool-mapping" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Azure DevOps API</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_ticket_types</code></td>
+<td><code>GET wit/workitemtypes</code></td>
+</tr>
+<tr>
+<td><code>get_ticket</code></td>
+<td><code>GET wit/workitems/{id}</code></td>
+</tr>
+<tr>
+<td><code>get_ticket_comments</code></td>
+<td><code>GET wit/workitems/{id}/comments</code></td>
+</tr>
+<tr>
+<td><code>add_comment</code></td>
+<td><code>POST wit/workitems/{id}/comments</code></td>
+</tr>
+<tr>
+<td><code>create_ticket</code></td>
+<td><code>POST wit/workitems/${type}</code></td>
+</tr>
+<tr>
+<td><code>update_ticket</code></td>
+<td><code>PATCH wit/workitems/{id}</code></td>
+</tr>
+<tr>
+<td><code>search_tickets</code></td>
+<td><code>POST wit/wiql</code> + <code>GET wit/workitems</code></td>
+</tr>
+<tr>
+<td><code>get_tickets_needing_my_reply</code></td>
+<td><code>POST wit/wiql</code> + <code>GET wit/workitems/{id}/comments</code></td>
+</tr>
+<tr>
+<td><code>link_tickets</code></td>
+<td><code>PATCH wit/workitems/{id}</code></td>
+</tr>
+<tr>
+<td><code>get_ticket_relations</code></td>
+<td><code>GET wit/workitems/{id}?$expand=relations</code></td>
+</tr>
+<tr>
+<td><code>get_iterations</code></td>
+<td><code>GET work/teamsettings/iterations</code></td>
+</tr>
+<tr>
+<td><code>move_to_iteration</code></td>
+<td><code>PATCH wit/workitems/{id}</code></td>
+</tr>
+<tr>
+<td><code>get_area_paths</code></td>
+<td><code>GET wit/classificationNodes/Areas</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="link-types">Link Types<a class="headerlink" href="#link-types" title="Permanent link">&para;</a></h2>
+<p>The <code>link_tickets</code> tool supports these link types:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>System.LinkTypes.Hierarchy-Reverse</code></td>
+<td>Parent (default)</td>
+</tr>
+<tr>
+<td><code>System.LinkTypes.Hierarchy-Forward</code></td>
+<td>Child</td>
+</tr>
+<tr>
+<td><code>System.LinkTypes.Related</code></td>
+<td>Related</td>
+</tr>
+</tbody>
+</table>
+<h2 id="state-values">State Values<a class="headerlink" href="#state-values" title="Permanent link">&para;</a></h2>
+<p>Common states for <code>update_ticket</code> and <code>search_tickets</code>:</p>
+<ul>
+<li><code>New</code>, <code>Active</code>, <code>Closed</code>, <code>Resolved</code>, <code>Removed</code></li>
+</ul>
+<p>Exact values depend on your project's process template.</p></div>
+            </div>
+        </div>
+
+        <footer class="col-md-12">
+            <hr>
+            <p>Documentation built with <a href="https://properdocs.org/">ProperDocs</a>.</p>
+        </footer>
+        <script src="../js/bootstrap.bundle.min.js"></script>
+        <script>
+            var base_url = "..",
+                shortcuts = {"help": 191, "next": 78, "previous": 80, "search": 83};
+        </script>
+        <script src="../js/base.js"></script>
+        <script src="../search/main.js"></script>
+
+        <div class="modal" id="properdocs_search_modal" tabindex="-1" role="dialog" aria-labelledby="searchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="searchModalLabel">Search</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>From here you can search these documents. Enter your search terms below.</p>
+                <form>
+                    <div class="form-group">
+                        <input type="search" class="form-control" placeholder="Search..." id="properdocs-search-query" title="Type search term here">
+                    </div>
+                </form>
+                <div id="properdocs-search-results" data-no-results-text="No results found"></div>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div><div class="modal" id="properdocs_keyboard_modal" tabindex="-1" role="dialog" aria-labelledby="keyboardModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="keyboardModalLabel">Keyboard Shortcuts</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 20%;">Keys</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="help shortcut"><kbd>?</kbd></td>
+                    <td>Open this help</td>
+                  </tr>
+                  <tr>
+                    <td class="next shortcut"><kbd>n</kbd></td>
+                    <td>Next page</td>
+                  </tr>
+                  <tr>
+                    <td class="prev shortcut"><kbd>p</kbd></td>
+                    <td>Previous page</td>
+                  </tr>
+                  <tr>
+                    <td class="search shortcut"><kbd>s</kbd></td>
+                    <td>Search</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div>
+
+    </body>
+</html>

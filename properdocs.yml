@@ -1,0 +1,34 @@
+site_name: mcp-ticketing
+site_description: MCP server for managing tickets on Azure DevOps and GitHub Issues
+site_url: ""
+
+repo_url: https://github.com/saxix/mcp-ticketing
+repo_name: saxix/mcp-ticketing
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: mkdocs
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Configuration: configuration.md
+  - Backends:
+      - Azure DevOps: azure.md
+      - GitHub: github.md
+  - Tools Reference: tools.md
+  - Integration:
+      - opencode: opencode.md
