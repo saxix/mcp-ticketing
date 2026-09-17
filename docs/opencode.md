@@ -1,39 +1,99 @@
 # opencode Integration
 
+## Installation
+
+Install mcp-ticketing in one of three ways:
+
+**1. From source (dev mode, no install):**
+
+```bash
+git clone https://github.com/saxix/mcp-ticketing.git
+cd mcp-ticketing && uv sync
+```
+
+**2. From PyPI (ephemeral, always latest):**
+
+```bash
+uvx mcp-ticketing github --check
+```
+
+**3. From PyPI (globally installed):**
+
+```bash
+uv tool install mcp-ticketing    # or: pipx install mcp-ticketing
+```
+
 ## Configuration
 
-Add mcp-ticketing to your `opencode.json`:
+Add mcp-ticketing to your `opencode.json` (`~/.config/opencode/opencode.jsonc` or `.opencode/opencode.json` in a project).
+
+**Dev mode** (runs from the source checkout, `--project` makes it independent of the working directory):
 
 ```json
 {
   "mcp": {
     "azure-devops": {
       "type": "local",
-      "command": ["uv", "run", "mcp-ticketing", "azure"],
-      "cwd": "/path/to/mcp-ticketing",
+      "command": ["uv", "run", "--project", "/path/to/mcp-ticketing", "mcp-ticketing", "azure"],
       "enabled": true
     },
     "github": {
       "type": "local",
-      "command": ["uv", "run", "mcp-ticketing", "github"],
-      "cwd": "/path/to/mcp-ticketing",
-      "enabled": true
-    },
-    "taiga": {
-      "type": "local",
-      "command": ["uv", "run", "mcp-ticketing", "taiga"],
-      "cwd": "/path/to/mcp-ticketing",
-      "enabled": true
-    },
-    "redmine": {
-      "type": "local",
-      "command": ["uv", "run", "mcp-ticketing", "redmine"],
-      "cwd": "/path/to/mcp-ticketing",
+      "command": ["uv", "run", "--project", "/path/to/mcp-ticketing", "mcp-ticketing", "github"],
       "enabled": true
     }
   }
 }
 ```
+
+**From PyPI, ephemeral (`uvx`):**
+
+```json
+{
+  "mcp": {
+    "github": {
+      "type": "local",
+      "command": ["uvx", "mcp-ticketing", "github"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**Globally installed:**
+
+```json
+{
+  "mcp": {
+    "github": {
+      "type": "local",
+      "command": ["mcp-ticketing", "github"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Credentials can be injected without a `.env` file using per-server `environment`:
+
+```json
+{
+  "mcp": {
+    "github": {
+      "type": "local",
+      "command": ["uvx", "mcp-ticketing", "github"],
+      "enabled": true,
+      "environment": {
+        "MCP_GITHUB_OWNER": "your-org-or-user",
+        "MCP_GITHUB_REPO": "your-repo",
+        "MCP_GITHUB_TOKEN": "{env:MCP_GITHUB_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+`{env:MCP_GITHUB_TOKEN}` is resolved from your shell environment; make sure the referenced variable is set before launching opencode.
 
 !!! tip
 

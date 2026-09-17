@@ -1,6 +1,9 @@
+import base64
 import json
 import os
+import re
 
+import httpx
 import pytest
 
 pytestmark = [
@@ -40,6 +43,8 @@ from mcp_ticketing.ticket_manager import TicketManager
 manager = TicketManager(strategy=AzureConnector())
 
 add_comment = manager.add_comment
+add_mermaid = manager.add_mermaid
+add_ticket_image = manager.add_ticket_image
 create_ticket = manager.create_ticket
 get_area_paths = manager.get_area_paths
 get_iterations = manager.get_iterations
@@ -200,6 +205,8 @@ async def test_create_ticket_and_crud():
         assert p["success"] is True
         assert p["id"] == tid
 
+    await update_ticket(ticket_id=tid, state="Closed")
+
 
 async def test_create_ticket_with_all_fields():
     result = await create_ticket(
@@ -263,5 +270,86 @@ async def test_add_comment_empty_text():
     result = await add_comment(tid, "")
     parsed = _load(result)
     assert "success" in parsed or "error" in parsed
+
+    await update_ticket(ticket_id=tid, state="Closed")
+
+
+async def test_add_ticket_image_invalid_file(tmp_path):
+    fake = tmp_path / "not-an-image.txt"
+    fake.write_bytes(b"this is not an image")
+    result = await add_ticket_image(1, str(fake))
+    parsed = _load(result)
+    assert "error" in parsed
+    assert "image" in parsed["error"]
+
+
+async def test_add_ticket_image(tmp_path):
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+        "AAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    )
+    image = tmp_path / "pixel.png"
+    image.write_bytes(png)
+
+    r = await create_ticket(ticket_type="Task", title="[PYTEST] Image attach test")
+    p = _check(r)
+    tid = p["id"]
+
+    result = await add_ticket_image(tid, str(image), comment="screenshot")
+    parsed = _check(result)
+    assert parsed["success"] is True
+    assert parsed["ticket_id"] == tid
+    assert parsed["file_name"] == "pixel.png"
+    assert "attachment_id" in parsed
+    assert "url" in parsed
+    assert parsed["url"].startswith("https://dev.azure.com/")
+
+    relations = await get_ticket_relations(tid)
+    rel_parsed = _check(relations)
+    assert any(r["type"] == "AttachedFile" for r in rel_parsed["relations"])
+
+    await update_ticket(ticket_id=tid, state="Closed")
+
+
+async def test_add_mermaid():
+    r = await create_ticket(
+        ticket_type="Task",
+        title="[PYTEST] Mermaid diagram — pytest",
+        description="Body for mermaid",
+    )
+    p = _check(r)
+    tid = p["id"]
+
+    diagram = "flowchart TD\n  A[Start] --> B[End]"
+    result = await add_mermaid(tid, diagram, title="Flow")
+    parsed = _check(result)
+    assert parsed["success"] is True
+    assert parsed["ticket_id"] == tid
+    assert parsed["file_name"] == f"mermaid-{tid}.png"
+    assert "attachment_id" in parsed
+    assert "renderer" in parsed and parsed["renderer"] == "mermaidx"
+    assert parsed["url"].startswith("https://dev.azure.com/")
+
+    relations = await get_ticket_relations(tid)
+    rel_parsed = _check(relations)
+    assert any(r["type"] == "AttachedFile" for r in rel_parsed["relations"])
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            parsed["url"],
+            auth=("", os.environ["MCP_AZDO_PAT"]),
+        )
+        assert response.status_code == 200
+        assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    from mcp_ticketing.azure_connector import API_VERSION
+
+    item = await manager._strategy.client.get(
+        f"wit/workitems/{tid}", params={"api-version": API_VERSION}
+    )
+    description = item.get("fields", {}).get("System.Description", "")
+    assert re.search(r'<img src="[^"]+\?fileName=mermaid-\d+\.png"', description)
+    assert "Flow" in description
+    assert "flowchart TD" not in description
 
     await update_ticket(ticket_id=tid, state="Closed")

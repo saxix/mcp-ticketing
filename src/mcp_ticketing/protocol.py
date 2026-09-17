@@ -5,6 +5,7 @@ The protocol defines the full set of operations that any ticketing backend
 following the project convention for MCP tool outputs.
 """
 
+import json
 from abc import ABC, abstractmethod
 
 
@@ -36,6 +37,35 @@ class TicketProtocol(ABC):
     @abstractmethod
     async def add_comment(self, ticket_id: int, text: str) -> str:
         """Add a comment to a ticket."""
+
+    @abstractmethod
+    async def add_mermaid(
+        self,
+        ticket_id: int,
+        diagram: str,
+        title: str = "",
+        section: str = "Diagrams",
+    ) -> str:
+        """Append a Mermaid diagram to a ticket.
+
+        ``section`` is used by GitHub (Markdown heading, default 'Diagrams')
+        and ignored by Azure, which renders the diagram to a PNG and
+        attaches it to the work item.
+        """
+
+    async def add_ticket_image(
+        self, ticket_id: int, image_path: str, comment: str = ""
+    ) -> str:
+        """Attach an image file to a ticket.
+
+        Backends that do not support image attachments inherit this default
+        implementation and return a "not supported" error without hitting
+        the network.
+        """
+        return json.dumps(
+            {"error": "add_ticket_image is not supported by this backend."},
+            ensure_ascii=False,
+        )
 
     @abstractmethod
     async def create_ticket(

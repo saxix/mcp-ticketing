@@ -1,16 +1,18 @@
 # mcp-ticketing
 
-MCP server for managing tickets on **Azure DevOps**, **GitHub Issues**, **Taiga** and **Redmine**.
+MCP server for managing tickets on **Azure DevOps** and **GitHub Issues**.
 
-All backends expose the same 13 tools with identical function names, so you can switch providers without changing your workflow.
+All backends expose the same 15 tools with identical function names, so you can switch providers without changing your workflow.
 
 ## Features
 
-- **Unified API** — same 13 tools for Azure DevOps, GitHub, Taiga and Redmine
+- **Unified API** — same 15 tools for Azure DevOps and GitHub
 - **Ticket CRUD** — create, read, update, search tickets
 - **Comments** — add and read comments
+- **Attachments** — attach local image files to tickets
+- **Diagrams** — append Mermaid diagrams to tickets
 - **Links** — link tickets together
-- **Iterations** — manage sprints (Azure), milestones (GitHub/Taiga) and versions (Redmine)
+- **Iterations** — manage sprints (Azure) and milestones (GitHub)
 - **Reply detection** — find tickets where you need to reply
 
 ## Quick Start
@@ -25,8 +27,6 @@ cp .env.example .env
 # Run
 uv run mcp-ticketing azure    # Azure DevOps
 uv run mcp-ticketing github   # GitHub
-uv run mcp-ticketing taiga    # Taiga
-uv run mcp-ticketing redmine  # Redmine
 ```
 
 ## Available Tools
@@ -37,6 +37,8 @@ uv run mcp-ticketing redmine  # Redmine
 | `get_ticket` | Retrieve ticket details |
 | `get_ticket_comments` | List all comments |
 | `add_comment` | Add a comment |
+| `add_mermaid` | Add a Mermaid diagram (source on GitHub, PNG attachment on Azure) |
+| `add_ticket_image` | Attach a local image file (Azure only) |
 | `create_ticket` | Create a new ticket |
 | `update_ticket` | Update an existing ticket |
 | `search_tickets` | Search with query or filters |
@@ -56,10 +58,8 @@ src/mcp_ticketing/
 ├── protocol.py          # TicketProtocol (ABC)
 ├── azure_connector.py   # AzureConnector strategy
 ├── github_connector.py  # GithubConnector strategy
-├── taiga_connector.py   # TaigaConnector strategy
-├── redmine_connector.py # RedmineConnector strategy
 ├── ticket_manager.py    # TicketManager (facade, backend-agnostic)
-└── main.py              # Composition root: MCPServer + 13 @mcp.tool()
+└── main.py              # Composition root: MCPServer + 15 @mcp.tool()
 ```
 
-`main.py` builds a single `TicketManager` from the backend chosen on the command line (`uv run mcp-ticketing azure|github|taiga|redmine`) and registers the 13 MCP tools against it. The server is built with `MCPServer` from `mcp.server.mcpserver`.
+`main.py` builds a single `TicketManager` from the backend chosen on the command line (`uv run mcp-ticketing azure|github`) and registers the 15 MCP tools against it. The server is built with `MCPServer` from `mcp.server.mcpserver`.

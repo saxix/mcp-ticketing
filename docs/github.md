@@ -32,6 +32,7 @@ https://api.github.com/repos/{owner}/{repo}/
 | `get_ticket` | `GET issues/{number}` |
 | `get_ticket_comments` | `GET issues/{number}/comments` |
 | `add_comment` | `POST issues/{number}/comments` |
+| `add_mermaid` | `GET issues/{number}` + `PATCH issues/{number}` (Markdown body) |
 | `create_ticket` | `POST issues` |
 | `update_ticket` | `PATCH issues/{number}` |
 | `search_tickets` | `GET search/issues` |
@@ -61,6 +62,10 @@ When using filters (not a custom query), the search uses GitHub's search API syn
 ### `link_tickets`
 
 GitHub Issues don't have formal link types. Links are added as cross-reference comments. The `link_type` parameter is ignored.
+
+### `add_ticket_image`
+
+Not supported on GitHub. GitHub Issues have no native attachment API, so the tool returns an error (`{"error": "add_ticket_image is not supported by this backend."}`). Use Azure DevOps for image attachments.
 
 ### `get_area_paths`
 

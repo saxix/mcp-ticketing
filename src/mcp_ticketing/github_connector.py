@@ -121,6 +121,27 @@ def format_ticket(issue: dict) -> str:
     )
 
 
+def append_mermaid_markdown(
+    body: str, diagram: str, title: str = "", section: str = "Diagrams"
+) -> str:
+    """Append a Mermaid diagram at the bottom of a Markdown ticket body.
+
+    Diagrams are collected under a ``## <section>`` heading (default
+    'Diagrams') at the end of the description. If the section already
+    exists, only the new diagram block is appended.
+    """
+    body = (body or "").rstrip()
+    paragraphs: list[str] = []
+    if body:
+        paragraphs.append(body)
+    if not re.search(rf"^##\s+{re.escape(section)}\s*$", body, re.MULTILINE):
+        paragraphs.append(f"## {section}")
+    if title:
+        paragraphs.append(f"### {title}")
+    paragraphs.append(f"```mermaid\n{diagram}\n```")
+    return "\n\n".join(paragraphs) + "\n"
+
+
 class GithubConnector(TicketProtocol):
     """GitHub implementation of the TicketProtocol strategy."""
 
@@ -222,6 +243,49 @@ class GithubConnector(TicketProtocol):
                     "comment_id": data.get("id"),
                     "message": "Comment added successfully.",
                 }
+            )
+        except httpx.HTTPStatusError as e:
+            return json.dumps(
+                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+            )
+
+    async def add_mermaid(
+        self,
+        ticket_id: int,
+        diagram: str,
+        title: str = "",
+        section: str = "Diagrams",
+    ) -> str:
+        """Append a Mermaid diagram at the bottom of a Ticket (GitHub Issue body).
+
+        The Mermaid source is stored in a fenced ``mermaid`` block under a
+        ``## <section>`` heading (default 'Diagrams') at the end of the
+        issue body, so it stays editable and renderable by mermaid-enabled
+        viewers (github.com renders it automatically).
+
+        Args:
+            ticket_id: Issue number to update
+            diagram: Mermaid diagram source (e.g. "flowchart TD\\n  A[Start] --> B[End]")
+            title: Optional heading shown above the diagram
+            section: Section heading to append to (default 'Diagrams')
+        """
+        if not diagram or not diagram.strip():
+            return json.dumps({"error": "diagram is required."})
+
+        try:
+            issue = await self.client.get(f"issues/{ticket_id}")
+            body = issue.get("body", "") or ""
+            new_body = append_mermaid_markdown(body, diagram, title, section)
+            await self.client.patch(f"issues/{ticket_id}", data={"body": new_body})
+            return json.dumps(
+                {
+                    "success": True,
+                    "ticket_id": ticket_id,
+                    "section": section,
+                    "position": "bottom",
+                    "message": f"Mermaid diagram appended to ticket #{ticket_id} in section '{section}'.",
+                },
+                ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
             return json.dumps(

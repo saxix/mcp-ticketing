@@ -1,5 +1,7 @@
 """Azure DevOps connector implementing TicketProtocol."""
 
+import asyncio
+import html
 import json
 import logging
 import os
@@ -9,6 +11,7 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
+from mcp_ticketing._images import is_image_file, read_image_file
 from mcp_ticketing.protocol import TicketProtocol
 
 load_dotenv()
@@ -91,6 +94,25 @@ class AzdoClient:
             response.raise_for_status()
             return response.json()
 
+    async def post_bytes(
+        self,
+        path: str,
+        data: bytes,
+        content_type: str = "application/octet-stream",
+        params: dict | None = None,
+    ) -> dict[str, Any]:
+        url = f"{self.base_url}/{path}"
+        async with self.get_client() as client:
+            response = await client.post(
+                url,
+                auth=self._auth(),
+                headers={"Content-Type": content_type, "Accept": "application/json"},
+                content=data,
+                params=params,
+            )
+            response.raise_for_status()
+            return response.json()
+
 
 def format_ticket(item: dict) -> str:
     fields = item.get("fields", {})
@@ -117,6 +139,19 @@ def format_ticket(item: dict) -> str:
         indent=2,
         ensure_ascii=False,
     )
+
+
+def _render_mermaid_png(diagram: str, scale: float = 2.0) -> bytes:
+    """Render a Mermaid diagram source to a high-resolution PNG.
+
+    Uses the bundled ``mermaidx`` engine (embedded QuickJS running the real
+    Mermaid v11 library, rasterized by resvg) — fully offline, no browser.
+    A 2x scale factor produces a crisp image that stays readable when
+    zoomed into.
+    """
+    from mermaidx import render
+
+    return render(diagram).png(scale=scale, background="#ffffff")
 
 
 class AzureConnector(TicketProtocol):
@@ -248,6 +283,184 @@ class AzureConnector(TicketProtocol):
             return json.dumps(
                 {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
             )
+
+    async def add_ticket_image(
+        self, ticket_id: int, image_path: str, comment: str = ""
+    ) -> str:
+        """Attach an image file to a Ticket (Azure DevOps work item attachment).
+
+        Args:
+            ticket_id: ID of the work item
+            image_path: local path to an image file (PNG, JPEG, GIF, WebP, ...)
+            comment: optional label shown next to the attachment
+        """
+        if (
+            not image_path
+            or not os.path.isfile(image_path)
+            or not is_image_file(image_path)
+        ):
+            return json.dumps(
+                {"error": f"image_path is not a readable image file: {image_path!r}"}
+            )
+
+        file_name = os.path.basename(image_path)
+        blob = await asyncio.to_thread(read_image_file, image_path)
+        if blob is None:
+            return json.dumps({"error": f"Could not read {image_path!r}."})
+
+        try:
+            attachment = await self.client.post_bytes(
+                "wit/attachments",
+                data=blob,
+                content_type="application/octet-stream",
+                params={"api-version": API_VERSION, "fileName": file_name},
+            )
+        except httpx.HTTPStatusError as e:
+            return json.dumps(
+                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+            )
+
+        attributes = {"comment": comment} if comment else {}
+        operations = [
+            {
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": "AttachedFile",
+                    "url": attachment.get("url", ""),
+                    **({"attributes": attributes} if attributes else {}),
+                },
+            }
+        ]
+        try:
+            await self.client.patch(
+                f"wit/workitems/{ticket_id}",
+                data=operations,
+                params={"api-version": API_VERSION},
+            )
+        except httpx.HTTPStatusError as e:
+            return json.dumps(
+                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+            )
+
+        return json.dumps(
+            {
+                "success": True,
+                "ticket_id": ticket_id,
+                "file_name": file_name,
+                "attachment_id": attachment.get("id"),
+                "url": attachment.get("url"),
+                "message": f"Image '{file_name}' attached to ticket #{ticket_id}.",
+            },
+            ensure_ascii=False,
+        )
+
+    async def add_mermaid(
+        self,
+        ticket_id: int,
+        diagram: str,
+        title: str = "",
+        section: str = "Diagrams",
+    ) -> str:
+        """Render a Mermaid diagram to a PNG and embed it in a Ticket.
+
+        The diagram is rendered locally (via the bundled ``mermaidx``
+        engine) to a high-resolution PNG, attached to the work item through
+        the ``wit/attachments`` endpoint plus an ``AttachedFile`` relation,
+        and embedded at the bottom of the description with an ``<img>`` tag
+        so it is visible directly in the ticket and stays readable even
+        when zoomed into.
+
+        Args:
+            ticket_id: ID of the work item
+            diagram: Mermaid diagram source (e.g. "flowchart TD\\n  A[Start] --> B[End]")
+            title: Optional label shown as the image caption/attachment
+                label (defaults to 'Mermaid diagram').
+            section: Ignored on Azure (kept for protocol consistency with GitHub).
+        """
+        if not diagram or not diagram.strip():
+            return json.dumps({"error": "diagram is required."})
+
+        try:
+            png_bytes = await asyncio.to_thread(_render_mermaid_png, diagram)
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"error": f"Failed to render Mermaid diagram: {exc}"})
+
+        file_name = f"mermaid-{ticket_id}.png"
+        try:
+            attachment = await self.client.post_bytes(
+                "wit/attachments",
+                data=png_bytes,
+                content_type="application/octet-stream",
+                params={"api-version": API_VERSION, "fileName": file_name},
+            )
+        except httpx.HTTPStatusError as e:
+            return json.dumps(
+                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+            )
+
+        attachment_id = attachment.get("id")
+        url = attachment.get("url", "") or (
+            f"https://dev.azure.com/{AZDO_ORG}/{AZDO_PROJECT}/_apis/"
+            f"wit/attachments/{attachment_id}"
+        )
+
+        label = title or "Mermaid diagram"
+        try:
+            await self.client.patch(
+                f"wit/workitems/{ticket_id}",
+                data=[
+                    {
+                        "op": "add",
+                        "path": "/relations/-",
+                        "value": {
+                            "rel": "AttachedFile",
+                            "url": url,
+                            "attributes": {"comment": label},
+                        },
+                    }
+                ],
+                params={"api-version": API_VERSION},
+            )
+
+            item = await self.client.get(
+                f"wit/workitems/{ticket_id}", params={"api-version": API_VERSION}
+            )
+            description = (
+                item.get("fields", {}).get("System.Description", "") or ""
+            ).rstrip()
+            image_html = f'<p><img src="{url}" alt="{html.escape(label)}"></p>'
+            new_description = (
+                f"{description}\n{image_html}" if description else image_html
+            )
+            await self.client.patch(
+                f"wit/workitems/{ticket_id}",
+                data=[
+                    {
+                        "op": "add",
+                        "path": "/fields/System.Description",
+                        "value": new_description,
+                    }
+                ],
+                params={"api-version": API_VERSION},
+            )
+        except httpx.HTTPStatusError as e:
+            return json.dumps(
+                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+            )
+
+        return json.dumps(
+            {
+                "success": True,
+                "ticket_id": ticket_id,
+                "file_name": file_name,
+                "attachment_id": attachment_id,
+                "url": url,
+                "renderer": "mermaidx",
+                "message": f"Mermaid diagram embedded in ticket #{ticket_id}.",
+            },
+            ensure_ascii=False,
+        )
 
     async def create_ticket(
         self,

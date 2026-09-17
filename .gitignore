@@ -8,3 +8,7 @@ dist/
 wheels/
 *.egg-info
 !.gitignore
+!.env.example
+
+# Documentation build output
+site/

@@ -32,6 +32,8 @@ https://dev.azure.com/{org}/{project}/_apis/
 | `get_ticket` | `GET wit/workitems/{id}` |
 | `get_ticket_comments` | `GET wit/workitems/{id}/comments` |
 | `add_comment` | `POST wit/workitems/{id}/comments` |
+| `add_mermaid` | `POST wit/attachments` + `PATCH wit/workitems/{id}` (AttachedFile relation + `<img>` embedded in the description; PNG rendered locally via `mermaidx`) |
+| `add_ticket_image` | `POST wit/attachments` + `PATCH wit/workitems/{id}` (AttachedFile relation) |
 | `create_ticket` | `POST wit/workitems/${type}` |
 | `update_ticket` | `PATCH wit/workitems/{id}` |
 | `search_tickets` | `POST wit/wiql` + `GET wit/workitems` |
