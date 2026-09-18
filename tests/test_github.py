@@ -36,6 +36,7 @@ from mcp_ticketing.ticket_manager import TicketManager
 manager = TicketManager(strategy=GithubConnector())
 
 add_comment = manager.add_comment
+add_mermaid = manager.add_mermaid
 create_ticket = manager.create_ticket
 get_area_paths = manager.get_area_paths
 get_iterations = manager.get_iterations
@@ -188,3 +189,39 @@ async def test_link_two_tickets():
 
     await update_ticket(ticket_id=tid_a, state="closed")
     await update_ticket(ticket_id=tid_b, state="closed")
+
+
+async def test_add_ticket_image_not_supported(tmp_path):
+    png = tmp_path / "pixel.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    result = await manager.add_ticket_image(1, str(png), comment="screenshot")
+    parsed = _load(result)
+    assert "error" in parsed
+    assert "not supported" in parsed["error"]
+
+
+async def test_add_mermaid():
+    result = await create_ticket(
+        title="[PYTEST] Mermaid diagram — pytest",
+        description="Body for mermaid",
+        tags="pytest",
+    )
+    parsed = _check(result)
+    tid = parsed["id"]
+
+    diagram = "flowchart TD\n  A[Start] --> B[End]"
+    r = await add_mermaid(tid, diagram, title="Flow")
+    p = _check(r)
+    assert p["success"] is True
+    assert p["ticket_id"] == tid
+    assert p["section"] == "Diagrams"
+
+    issue = await manager._strategy.client.get(f"issues/{tid}")
+    body = issue.get("body", "")
+    assert "## Diagrams" in body
+    assert "### Flow" in body
+    assert "```mermaid\nflowchart TD\n  A[Start] --> B[End]\n```" in body
+    assert body.rstrip().endswith("```")
+
+    await update_ticket(ticket_id=tid, state="closed")

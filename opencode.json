@@ -3,22 +3,12 @@
   "mcp": {
     "azure-devops": {
       "type": "local",
-      "command": ["uv", "run", "mcp-ticketing", "azure"],
+      "command": ["uv", "run", "--project", ".", "mcp-ticketing", "azure"],
       "enabled": true
     },
     "github": {
       "type": "local",
-      "command": ["uv", "run", "mcp-ticketing", "github"],
-      "enabled": true
-    },
-    "taiga": {
-      "type": "local",
-      "command": ["uv", "run", "mcp-ticketing", "taiga"],
-      "enabled": true
-    },
-    "redmine": {
-      "type": "local",
-      "command": ["uv", "run", "mcp-ticketing", "redmine"],
+      "command": ["uv", "run", "--project", ".", "mcp-ticketing", "github"],
       "enabled": true
     }
   }

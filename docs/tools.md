@@ -1,6 +1,6 @@
 # Tools Reference
 
-Both Azure DevOps, GitHub, Taiga and Redmine backends expose the same 13 tools with identical function names and parameter signatures. Minor behavioral differences are backend-specific — see [Azure DevOps](azure.md), [GitHub](github.md), [Taiga](taiga.md) and [Redmine](redmine.md) for details.
+Both Azure DevOps and GitHub backends expose the same 15 tools with identical function names and parameter signatures. Minor behavioral differences are backend-specific — see [Azure DevOps](azure.md) and [GitHub](github.md) for details.
 
 ---
 
@@ -91,6 +91,87 @@ Add a comment to a ticket.
 
 ---
 
+## `add_mermaid`
+
+Add a Mermaid diagram to a ticket.
+
+- **GitHub**: the Mermaid source is appended at the bottom of the issue body, under the `## Diagrams` heading (rendered automatically by GitHub). The `section` parameter controls the heading.
+- **Azure**: the diagram is rendered locally to a high-resolution PNG (2x zoom-friendly, via the bundled `mermaidx` engine), attached to the work item as an `AttachedFile` relation **and** embedded at the bottom of the description with an `<img>` tag so it is visible directly in the ticket. `section` is ignored.
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `ticket_id` | int | Yes | — | Ticket ID (work item ID or issue number) |
+| `diagram` | str | Yes | — | Mermaid diagram source (e.g. `"flowchart TD\n  A[Start] --> B[End]"`) |
+| `title` | str | No | `""` | GitHub: heading above the diagram; Azure: attachment label |
+| `section` | str | No | `"Diagrams"` | Section heading to append to (GitHub only) |
+
+On GitHub, if a `## Diagrams` section already exists, only the new diagram block is appended (no duplicate heading).
+
+**Returns (GitHub):**
+
+```json
+{
+  "success": true,
+  "ticket_id": 1234,
+  "section": "Diagrams",
+  "position": "bottom",
+  "message": "Mermaid diagram appended to ticket #1234 in section 'Diagrams'."
+}
+```
+
+**Returns (Azure):**
+
+```json
+{
+  "success": true,
+  "ticket_id": 1234,
+  "file_name": "mermaid-1234.png",
+  "attachment_id": "a1b2c3d4-...",
+  "url": "https://dev.azure.com/org/project/_apis/wit/attachments/a1b2c3d4-...",
+  "renderer": "mermaidx",
+  "message": "Mermaid diagram embedded in ticket #1234."
+}
+```
+
+---
+
+## `add_ticket_image`
+
+Attach a local image file to a ticket. **Azure only** — GitHub Issues have no native attachment API and this tool returns `{"error": "add_ticket_image is not supported by this backend."}` on GitHub.
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `ticket_id` | int | Yes | — | Work item ID |
+| `image_path` | str | Yes | — | Local path to an image file (PNG, JPEG, GIF, WebP, ...) |
+| `comment` | str | No | `""` | Attachment label |
+
+**Returns (Azure):**
+
+```json
+{
+  "success": true,
+  "ticket_id": 1234,
+  "file_name": "screenshot.png",
+  "attachment_id": "a1b2c3d4-...",
+  "url": "https://dev.azure.com/org/project/_apis/wit/attachments/a1b2c3d4-...",
+  "message": "Image 'screenshot.png' attached to ticket #1234."
+}
+```
+
+**Returns (GitHub):**
+
+```json
+{
+  "error": "add_ticket_image is not supported by this backend."
+}
+```
+
+---
+
 ## `create_ticket`
 
 Create a new ticket.
@@ -101,12 +182,12 @@ Create a new ticket.
 |------|------|----------|---------|-------------|
 | `ticket_type` | str | Yes | `""` | Ticket type (Task, Bug, etc.) |
 | `title` | str | Yes | `""` | Ticket title |
-| `description` | str | No | `""` | Description (HTML for Azure, Markdown for GitHub, plain for Taiga/Redmine) |
-| `assigned_to` | str | No | `""` | Assignee (display name Azure, username GitHub, display name/username Taiga, name/login Redmine) |
+| `description` | str | No | `""` | Description (HTML for Azure, Markdown for GitHub) |
+| `assigned_to` | str | No | `""` | Assignee (display name Azure, username GitHub) |
 | `priority` | int | No | `0` | Priority (1-4) |
-| `tags` | str | No | `""` | Semicolon-separated tags (ignored for Redmine) |
-| `area_path` | str | No | `""` | Area path (Azure), labels (GitHub), tag (Taiga) or category (Redmine) |
-| `iteration_path` | str | No | `""` | Iteration (Azure), milestone title (GitHub/Taiga) or version name (Redmine) |
+| `tags` | str | No | `""` | Semicolon-separated tags |
+| `area_path` | str | No | `""` | Area path (Azure) or labels (GitHub) |
+| `iteration_path` | str | No | `""` | Iteration (Azure) or milestone title (GitHub) |
 
 !!! note
 
@@ -165,7 +246,7 @@ Search tickets using a query or built-in filters.
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `query` | str | No | `""` | Custom WIQL query (Azure), search query (GitHub), free-text (Taiga) or subject search (Redmine) |
+| `query` | str | No | `""` | Custom WIQL query (Azure) or search query (GitHub) |
 | `ticket_type` | str | No | `""` | Filter by type |
 | `state` | str | No | `""` | Filter by state |
 | `assigned_to` | str | No | `""` | Filter by assignee |
@@ -215,7 +296,7 @@ Find active tickets assigned to you where the last comment was not written by yo
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `my_display_name` | str | Yes | Your display name (Azure) or username (GitHub/Taiga) |
+| `my_display_name` | str | Yes | Your display name (Azure) or username (GitHub) |
 
 **Returns:**
 
@@ -253,9 +334,7 @@ Link two tickets together.
 **Link type defaults:**
 
 - Azure: `System.LinkTypes.Hierarchy-Reverse` (parent)
-- GitHub: `related`
-- Taiga: `related` (cross-reference comment; link_type ignored)
-- Redmine: `related` (native relation; see [Redmine](redmine.md) for the accepted values)
+- GitHub: `related` (cross-reference comment)
 
 **Returns:**
 
@@ -301,7 +380,7 @@ Retrieve all links and cross-references of a ticket.
 
 ## `get_iterations`
 
-List all iterations/sprints (Azure), milestones (GitHub/Taiga) or versions (Redmine).
+List all iterations/sprints (Azure) or milestones (GitHub).
 
 **Parameters:** None
 
@@ -327,14 +406,14 @@ List all iterations/sprints (Azure), milestones (GitHub/Taiga) or versions (Redm
 
 ## `move_to_iteration`
 
-Move a ticket to a different iteration (Azure), milestone (GitHub/Taiga) or version (Redmine).
+Move a ticket to a different iteration (Azure) or milestone (GitHub).
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `ticket_id` | int | Yes | Ticket ID |
-| `iteration_path` | str | Yes | Iteration path (Azure) or milestone title (GitHub/Taiga) or version name (Redmine) |
+| `iteration_path` | str | Yes | Iteration path (Azure) or milestone title (GitHub) |
 
 **Returns:**
 
@@ -351,7 +430,7 @@ Move a ticket to a different iteration (Azure), milestone (GitHub/Taiga) or vers
 
 ## `get_area_paths`
 
-Retrieve all area paths (Azure), labels (GitHub), tags (Taiga) or categories (Redmine).
+Retrieve all area paths (Azure) or labels (GitHub).
 
 **Parameters:** None
 

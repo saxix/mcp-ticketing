@@ -39,23 +39,6 @@ Edit `.env` with your credentials. You can configure one or more backends:
     MCP_GITHUB_TOKEN=your-github-personal-access-token
     ```
 
-=== "Taiga"
-
-    ```bash
-    MCP_TAIGA_URL=https://api.taiga.io/api/v1
-    MCP_TAIGA_USERNAME=your-taiga-username
-    MCP_TAIGA_PASSWORD=your-taiga-password
-    MCP_TAIGA_PROJECT_ID=your-project-id
-    ```
-
-=== "Redmine"
-
-    ```bash
-    MCP_REDMINE_URL=https://your-redmine.example.com
-    MCP_REDMINE_API_KEY=your-redmine-api-key
-    MCP_REDMINE_PROJECT=your-project-identifier-or-id
-    ```
-
 See [Configuration](configuration.md) for all environment variables.
 
 ## Running the Server
@@ -63,15 +46,13 @@ See [Configuration](configuration.md) for all environment variables.
 ```bash
 uv run mcp-ticketing azure    # Azure DevOps
 uv run mcp-ticketing github   # GitHub
-uv run mcp-ticketing taiga    # Taiga
-uv run mcp-ticketing redmine  # Redmine
 ```
 
 Or run directly:
 
 ```bash
 uv run python -m mcp_ticketing.main azure    # Azure DevOps (default)
-uv run python -m mcp_ticketing.main redmine  # Redmine
+uv run python -m mcp_ticketing.main github   # GitHub
 ```
 
 ## Verifying the Connection
@@ -81,13 +62,22 @@ Start the server and use the MCP inspector or opencode to call `get_ticket_types
 Alternatively, verify the credentials from the command line without starting the server:
 
 ```bash
-uv run mcp-ticketing azure -check   # Prints {"status": "ok", ...} and exits
-uv run mcp-ticketing github -check
-uv run mcp-ticketing taiga -check
-uv run mcp-ticketing redmine -check
+uv run mcp-ticketing azure --check   # Prints {"status": "ok", ...} and exits
+uv run mcp-ticketing github --check
 ```
 
 Exit code is `0` on success, `1` on failure.
+
+You can also verify credentials without setting environment variables, passing them directly on the command line:
+
+```bash
+uv run mcp-ticketing github --check \
+  --owner your-github-username-or-org \
+  --repo your-repository-name \
+  --token your-github-personal-access-token
+```
+
+See [Configuration](configuration.md) for the full flag-to-environment mapping.
 
 ## Testing
 

@@ -1,29 +1,108 @@
 """MCP server entrypoint for the ticketing backends.
 
-Registers the 13 MCP tools against a single TicketManager whose strategy
-is chosen from the command line ('azure', 'github', 'taiga' or 'redmine'). The server
+Registers the 15 MCP tools against a single TicketManager whose strategy
+is chosen from the command line ('azure' or 'github'). The server
 is launched with ``uv run mcp-ticketing <backend>`` or
 ``uv run python -m mcp_ticketing.main <backend>``.
 
-Use ``-check`` to verify credentials and exit immediately::
+Credentials can be passed either through the environment variables or
+directly on the command line, which bypasses the environment::
 
-    uv run mcp-ticketing github -check
+    uv run mcp-ticketing github --check --owner saxix --repo myrepo --token <token>
 """
 
+import argparse
 import asyncio
 import json
+import os
 import sys
+from collections.abc import Sequence
 
 from mcp.server.mcpserver import MCPServer
 
-from mcp_ticketing.ticket_manager import TicketManager
+# The connectors read their configuration from the environment at import
+# time, so ``TicketManager`` is imported lazily (see ``_resolve``) after any
+# ``--owner/--repo/--token`` values have been pushed into the environment.
+# The ``mcp`` server is created eagerly because every tool is registered
+# against it with the ``@mcp.tool()`` decorator.
+mcp = MCPServer("mcp-ticketing")
 
-_positional = [a for a in sys.argv[1:] if not a.startswith("-")]
-backend = _positional[0] if _positional else "azure"
-_check_mode = any(a in ("-check", "--check") for a in sys.argv[1:])
+# Reassigned by ``_resolve`` once the CLI arguments have been processed.
+manager = None
 
-manager = TicketManager(strategy=backend)
-mcp = MCPServer(f"mcp-ticketing ({backend})")
+# CLI flag -> environment variable mapping per backend. Flags that do not
+# map cleanly onto a backend's credentials are simply ignored.
+CLI_ENV_MAP: dict[str, dict[str, str]] = {
+    "azure": {
+        "owner": "MCP_AZURE_DEVOPS_ORG",
+        "repo": "MCP_AZURE_DEVOPS_PROJECT",
+        "token": "MCP_AZDO_PAT",
+    },
+    "github": {
+        "owner": "MCP_GITHUB_OWNER",
+        "repo": "MCP_GITHUB_REPO",
+        "token": "MCP_GITHUB_TOKEN",
+    },
+}
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse ``argv`` (excluding the program name) into CLI options."""
+    # Backwards compatible alias: the legacy ``-check`` flag becomes ``--check``.
+    argv = ["--check" if a == "-check" else a for a in argv]
+
+    parser = argparse.ArgumentParser(
+        prog="mcp-ticketing",
+        description="MCP server for Azure DevOps and GitHub Issues ticketing.",
+    )
+    parser.add_argument(
+        "backend",
+        nargs="?",
+        default="azure",
+        choices=sorted(CLI_ENV_MAP),
+        help="Ticket backend to use (default: azure).",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Verify the connection and credentials, then exit without starting the server.",
+    )
+    parser.add_argument("--owner", help="Owner/org override for the selected backend.")
+    parser.add_argument(
+        "--repo", help="Project/repo override for the selected backend."
+    )
+    parser.add_argument("--token", help="Token override for the selected backend.")
+    return parser.parse_args(argv)
+
+
+def _apply_cli_env(args: argparse.Namespace) -> None:
+    """Push ``--owner/--repo/--token`` values into the environment for the selected backend.
+
+    Command-line values take precedence over any pre-existing environment
+    variable with the same name.
+    """
+    backend_map = CLI_ENV_MAP.get(args.backend, {})
+    for flag, value in (
+        ("owner", args.owner),
+        ("repo", args.repo),
+        ("token", args.token),
+    ):
+        if value is not None and flag in backend_map:
+            os.environ[backend_map[flag]] = value
+
+
+def _resolve(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse argv, apply the CLI environment overrides, and build the TicketManager."""
+    global manager
+    if argv is None:
+        argv = sys.argv[1:]
+    args = _parse_args(list(argv))
+    _apply_cli_env(args)
+
+    from mcp_ticketing.ticket_manager import TicketManager
+
+    manager = TicketManager(strategy=args.backend)
+    return args
 
 
 # ──────────────────────────────────────────────
@@ -58,6 +137,44 @@ async def get_ticket_comments(ticket_id: int) -> str:
 async def add_comment(ticket_id: int, text: str) -> str:
     """Add a comment to a ticket."""
     return await manager.add_comment(ticket_id, text)
+
+
+@mcp.tool()
+async def add_mermaid(
+    ticket_id: int,
+    diagram: str,
+    title: str = "",
+    section: str = "Diagrams",
+) -> str:
+    """Append a Mermaid diagram to a ticket.
+
+    GitHub: the Mermaid source is appended at the bottom of the issue body
+    under the given ``section`` heading (default 'Diagrams').\n
+    Azure: the diagram is rendered locally to a high-resolution PNG
+    (via the bundled ``mermaidx`` engine) and attached to the work item
+    as an AttachedFile relation. ``section`` is ignored on Azure.
+
+    Args:
+        ticket_id: ID of the ticket (work item ID or issue number)
+        diagram: Mermaid diagram source (e.g. "flowchart TD\\n  A[Start] --> B[End]")
+        title: Optional label. GitHub: heading above the diagram;
+            Azure: attachment label.
+        section: Section heading used by GitHub (default 'Diagrams')
+    """
+    return await manager.add_mermaid(ticket_id, diagram, title, section)
+
+
+@mcp.tool()
+async def add_ticket_image(ticket_id: int, image_path: str, comment: str = "") -> str:
+    """Attach a local image file to a ticket.
+
+    Args:
+        ticket_id: ID of the ticket (work item ID or issue number)
+        image_path: Local path to an image file (PNG, JPEG, GIF, WebP, ...)
+        comment: Optional comment shown next to the image.
+            Azure: attachment label. GitHub: text above the image in a new issue comment (images are uploaded into the repo and referenced via Markdown).
+    """
+    return await manager.add_ticket_image(ticket_id, image_path, comment)
 
 
 @mcp.tool()
@@ -255,8 +372,10 @@ async def get_area_paths() -> str:
 
 
 def main() -> None:
-    """Run the MCP server, or verify the backend connection with ``-check``."""
-    if _check_mode:
+    """Run the MCP server, or verify the backend connection with ``--check``."""
+    args = _resolve()
+
+    if args.check:
         try:
             result = asyncio.run(manager.check())
         except Exception as exc:  # noqa: BLE001  # pragma: no cover
@@ -266,6 +385,7 @@ def main() -> None:
         if "error" in json.loads(result):
             sys.exit(1)
         return
+
     mcp.run()
 
 

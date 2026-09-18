@@ -32,26 +32,23 @@ All configuration is done through environment variables. Load them via `.env`, `
 3. Select scope **repo** (full control of private repositories)
 4. Copy the generated token to `.env`
 
-## Taiga
+## Command-line overrides
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `MCP_TAIGA_URL` | No | API base URL (default `https://api.taiga.io/api/v1`) |
-| `MCP_TAIGA_USERNAME` | Yes | Taiga username |
-| `MCP_TAIGA_PASSWORD` | Yes | Taiga password |
-| `MCP_TAIGA_PROJECT_ID` | Yes | Taiga project ID |
+You can bypass the environment variables by passing the credentials directly on the command line. This works with `--check` and with the normal server run.
 
-The connector authenticates with `POST /auth` (username + password) and refreshes the bearer token automatically on HTTP 401.
+| Flag | Azure (env var) | GitHub (env var) |
+|------|-----------------|------------------|
+| `--owner` | `MCP_AZURE_DEVOPS_ORG` | `MCP_GITHUB_OWNER` |
+| `--repo` | `MCP_AZURE_DEVOPS_PROJECT` | `MCP_GITHUB_REPO` |
+| `--token` | `MCP_AZDO_PAT` | `MCP_GITHUB_TOKEN` |
 
-## Redmine
+```bash
+# Check the connection using CLI flags only (no .env needed)
+uv run mcp-ticketing azure --check --owner unicef --repo ICTD-HCT-MIS --token <pat>
+uv run mcp-ticketing github --check --owner saxix --repo myrepo --token <gh_pat>
+```
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `MCP_REDMINE_URL` | Yes | Redmine base URL (e.g. `https://redmine.example.com`) |
-| `MCP_REDMINE_API_KEY` | Yes | API key (sent as `X-Redmine-API-Key`) |
-| `MCP_REDMINE_PROJECT` | Yes | Project identifier or numeric ID |
-
-The connector authenticates with the `X-Redmine-API-Key` header. Project-specific data (trackers, categories, versions) is loaded from the configured project.
+Values passed on the command line take precedence over the environment variables.
 
 ## Security
 

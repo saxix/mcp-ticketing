@@ -1,14 +1,23 @@
 [project]
 name = "mcp-ticketing"
 version = "0.2.0"
-description = "MCP server for Azure DevOps, GitHub, Taiga and Redmine ticketing"
+description = "MCP server for Azure DevOps and GitHub Issues ticketing"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Stefano Apostolico", email = "s.apostolico@gmail.com" }]
+keywords = ["mcp", "gitHub", "azure", "azure-devops", "ticketing", "issues", "model-context-protocol"]
 dependencies = [
     "httpx>=0.28.1",
     "mcp-server>=0.1.4",
+    "mermaidx>=0.9",
     "python-dotenv>=1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/saxix/mcp-ticketing"
+Repository = "https://github.com/saxix/mcp-ticketing"
+Documentation = "https://saxix.github.io/mcp-ticketing/"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]

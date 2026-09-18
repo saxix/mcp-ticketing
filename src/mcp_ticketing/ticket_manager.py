@@ -9,14 +9,10 @@ without knowing which backend serves the tickets.
 from mcp_ticketing.azure_connector import AzureConnector
 from mcp_ticketing.github_connector import GithubConnector
 from mcp_ticketing.protocol import TicketProtocol
-from mcp_ticketing.redmine_connector import RedmineConnector
-from mcp_ticketing.taiga_connector import TaigaConnector
 
 BACKENDS: dict[str, type[TicketProtocol]] = {
     "azure": AzureConnector,
     "github": GithubConnector,
-    "taiga": TaigaConnector,
-    "redmine": RedmineConnector,
 }
 
 
@@ -24,9 +20,9 @@ class TicketManager(TicketProtocol):
     """Delegating facade that forwards all ticket operations to a strategy.
 
     The strategy is injected at construction time (dependency injection),
-    so the manager is backend-agnostic. It accepts either a concrete
-    TicketProtocol instance or a backend name (e.g. 'azure', 'github')
-    that is resolved through the BACKENDS registry.
+        so the manager is backend-agnostic. It accepts either a concrete
+        TicketProtocol instance or a backend name (e.g. 'azure', 'github')
+        that is resolved through the BACKENDS registry.
     """
 
     def __init__(self, strategy: str | TicketProtocol):
@@ -72,6 +68,22 @@ class TicketManager(TicketProtocol):
     async def add_comment(self, ticket_id: int, text: str) -> str:
         """Add a comment to a ticket."""
         return await self._strategy.add_comment(ticket_id, text)
+
+    async def add_mermaid(
+        self,
+        ticket_id: int,
+        diagram: str,
+        title: str = "",
+        section: str = "Diagrams",
+    ) -> str:
+        """Append a Mermaid diagram to a ticket."""
+        return await self._strategy.add_mermaid(ticket_id, diagram, title, section)
+
+    async def add_ticket_image(
+        self, ticket_id: int, image_path: str, comment: str = ""
+    ) -> str:
+        """Attach an image file to a ticket."""
+        return await self._strategy.add_ticket_image(ticket_id, image_path, comment)
 
     async def create_ticket(
         self,
