@@ -16,9 +16,7 @@ from mcp_ticketing.protocol import TicketProtocol
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("mcp-ticketing-azure")
 
 AZDO_ORG = os.getenv("MCP_AZURE_DEVOPS_ORG", "")
@@ -117,11 +115,7 @@ class AzdoClient:
 def format_ticket(item: dict) -> str:
     fields = item.get("fields", {})
     assigned = fields.get("System.AssignedTo", {})
-    assigned_name = (
-        assigned.get("displayName", "Unassigned")
-        if isinstance(assigned, dict)
-        else str(assigned)
-    )
+    assigned_name = assigned.get("displayName", "Unassigned") if isinstance(assigned, dict) else str(assigned)
     return json.dumps(
         {
             "id": item.get("id"),
@@ -165,11 +159,12 @@ class AzureConnector(TicketProtocol):
     # ──────────────────────────────────────────────
 
     async def get_ticket_types(self) -> str:
-        """Retrieve all valid ticket types configured for the project (e.g. Task, Bug, User Story, Issue, Change Request)."""
+        """Retrieve all valid ticket types configured for the project.
+
+        E.g. Task, Bug, User Story, Issue, Change Request.
+        """
         try:
-            data = await self.client.get(
-                "wit/workitemtypes", params={"api-version": API_VERSION}
-            )
+            data = await self.client.get("wit/workitemtypes", params={"api-version": API_VERSION})
             types = data.get("workItemTypes", data.get("value", []))
             result = []
             for t in types:
@@ -184,16 +179,12 @@ class AzureConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def check(self) -> str:
         """Verify the connection to Azure DevOps (reads the work item types)."""
         try:
-            await self.client.get(
-                "wit/workitemtypes", params={"api-version": API_VERSION}
-            )
+            await self.client.get("wit/workitemtypes", params={"api-version": API_VERSION})
             return json.dumps(
                 {
                     "status": "ok",
@@ -205,9 +196,7 @@ class AzureConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     # ──────────────────────────────────────────────
     #  TICKET CRUD
@@ -216,14 +205,10 @@ class AzureConnector(TicketProtocol):
     async def get_ticket(self, ticket_id: int) -> str:
         """Retrieve full details of a Ticket (Task, Bug, User Story) from Azure DevOps."""
         try:
-            data = await self.client.get(
-                f"wit/workitems/{ticket_id}", params={"api-version": API_VERSION}
-            )
+            data = await self.client.get(f"wit/workitems/{ticket_id}", params={"api-version": API_VERSION})
             return format_ticket(data)
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_ticket_comments(self, ticket_id: int) -> str:
         """Retrieve all comments associated with a Ticket in Azure DevOps."""
@@ -257,9 +242,7 @@ class AzureConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def add_comment(self, ticket_id: int, text: str) -> str:
         """Add a comment to a Ticket in Azure DevOps."""
@@ -280,13 +263,9 @@ class AzureConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
-    async def add_ticket_image(
-        self, ticket_id: int, image_path: str, comment: str = ""
-    ) -> str:
+    async def add_ticket_image(self, ticket_id: int, image_path: str, comment: str = "") -> str:
         """Attach an image file to a Ticket (Azure DevOps work item attachment).
 
         Args:
@@ -294,14 +273,8 @@ class AzureConnector(TicketProtocol):
             image_path: local path to an image file (PNG, JPEG, GIF, WebP, ...)
             comment: optional label shown next to the attachment
         """
-        if (
-            not image_path
-            or not os.path.isfile(image_path)
-            or not is_image_file(image_path)
-        ):
-            return json.dumps(
-                {"error": f"image_path is not a readable image file: {image_path!r}"}
-            )
+        if not image_path or not os.path.isfile(image_path) or not is_image_file(image_path):
+            return json.dumps({"error": f"image_path is not a readable image file: {image_path!r}"})
 
         file_name = os.path.basename(image_path)
         blob = await asyncio.to_thread(read_image_file, image_path)
@@ -316,9 +289,7 @@ class AzureConnector(TicketProtocol):
                 params={"api-version": API_VERSION, "fileName": file_name},
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
         attributes = {"comment": comment} if comment else {}
         operations = [
@@ -339,9 +310,7 @@ class AzureConnector(TicketProtocol):
                 params={"api-version": API_VERSION},
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
         return json.dumps(
             {
@@ -395,14 +364,11 @@ class AzureConnector(TicketProtocol):
                 params={"api-version": API_VERSION, "fileName": file_name},
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
         attachment_id = attachment.get("id")
         url = attachment.get("url", "") or (
-            f"https://dev.azure.com/{AZDO_ORG}/{AZDO_PROJECT}/_apis/"
-            f"wit/attachments/{attachment_id}"
+            f"https://dev.azure.com/{AZDO_ORG}/{AZDO_PROJECT}/_apis/wit/attachments/{attachment_id}"
         )
 
         label = title or "Mermaid diagram"
@@ -423,16 +389,10 @@ class AzureConnector(TicketProtocol):
                 params={"api-version": API_VERSION},
             )
 
-            item = await self.client.get(
-                f"wit/workitems/{ticket_id}", params={"api-version": API_VERSION}
-            )
-            description = (
-                item.get("fields", {}).get("System.Description", "") or ""
-            ).rstrip()
+            item = await self.client.get(f"wit/workitems/{ticket_id}", params={"api-version": API_VERSION})
+            description = (item.get("fields", {}).get("System.Description", "") or "").rstrip()
             image_html = f'<p><img src="{url}" alt="{html.escape(label)}"></p>'
-            new_description = (
-                f"{description}\n{image_html}" if description else image_html
-            )
+            new_description = f"{description}\n{image_html}" if description else image_html
             await self.client.patch(
                 f"wit/workitems/{ticket_id}",
                 data=[
@@ -445,9 +405,7 @@ class AzureConnector(TicketProtocol):
                 params={"api-version": API_VERSION},
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
         return json.dumps(
             {
@@ -475,10 +433,13 @@ class AzureConnector(TicketProtocol):
     ) -> str:
         """Create a new Ticket in Azure DevOps.
 
-        If ticket_type is not provided, returns a list of available types — call get_ticket_types() first to see valid options.
+        If ticket_type is not provided, returns a list of available
+        types — call get_ticket_types() first to see valid options.
 
         Args:
-            ticket_type: Ticket type (e.g. 'Task', 'Bug', 'User Story', 'Issue', 'Change Request'). Leave empty to retrieve available types.
+            ticket_type: Ticket type (e.g. 'Task', 'Bug', 'User Story',
+                'Issue', 'Change Request').
+                Leave empty to retrieve available types.
             title: Ticket title
             description: HTML description of the ticket
             assigned_to: Display name of the assignee (email or displayName)
@@ -489,9 +450,7 @@ class AzureConnector(TicketProtocol):
         """
         if not ticket_type:
             try:
-                types_data = await self.client.get(
-                    "wit/workitemtypes", params={"api-version": API_VERSION}
-                )
+                types_data = await self.client.get("wit/workitemtypes", params={"api-version": API_VERSION})
                 types = types_data.get("workItemTypes", types_data.get("value", []))
                 names = [t.get("name") for t in types if t.get("name")]
                 return json.dumps(
@@ -526,25 +485,19 @@ class AzureConnector(TicketProtocol):
                 }
             )
         if assigned_to:
-            operations.append(
-                {"op": "add", "path": "/fields/System.AssignedTo", "value": assigned_to}
-            )
+            operations.append({"op": "add", "path": "/fields/System.AssignedTo", "value": assigned_to})
         if priority > 0:
             operations.append(
                 {
                     "op": "add",
                     "path": "/fields/Microsoft.VSTS.Common.Priority",
-                    "value": priority,
+                    "value": str(priority),
                 }
             )
         if tags:
-            operations.append(
-                {"op": "add", "path": "/fields/System.Tags", "value": tags}
-            )
+            operations.append({"op": "add", "path": "/fields/System.Tags", "value": tags})
         if area_path:
-            operations.append(
-                {"op": "add", "path": "/fields/System.AreaPath", "value": area_path}
-            )
+            operations.append({"op": "add", "path": "/fields/System.AreaPath", "value": area_path})
         if iteration_path:
             operations.append(
                 {
@@ -573,9 +526,7 @@ class AzureConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def update_ticket(
         self,
@@ -605,9 +556,7 @@ class AzureConnector(TicketProtocol):
         operations = []
 
         if title:
-            operations.append(
-                {"op": "add", "path": "/fields/System.Title", "value": title}
-            )
+            operations.append({"op": "add", "path": "/fields/System.Title", "value": title})
         if description:
             operations.append(
                 {
@@ -625,25 +574,19 @@ class AzureConnector(TicketProtocol):
                 }
             )
         if state:
-            operations.append(
-                {"op": "add", "path": "/fields/System.State", "value": state}
-            )
+            operations.append({"op": "add", "path": "/fields/System.State", "value": state})
         if priority > 0:
             operations.append(
                 {
                     "op": "add",
                     "path": "/fields/Microsoft.VSTS.Common.Priority",
-                    "value": priority,
+                    "value": str(priority),
                 }
             )
         if tags:
-            operations.append(
-                {"op": "add", "path": "/fields/System.Tags", "value": tags}
-            )
+            operations.append({"op": "add", "path": "/fields/System.Tags", "value": tags})
         if area_path:
-            operations.append(
-                {"op": "add", "path": "/fields/System.AreaPath", "value": area_path}
-            )
+            operations.append({"op": "add", "path": "/fields/System.AreaPath", "value": area_path})
         if iteration_path:
             operations.append(
                 {
@@ -672,9 +615,7 @@ class AzureConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     # ──────────────────────────────────────────────
     #  SEARCH / QUERY
@@ -729,20 +670,14 @@ class AzureConnector(TicketProtocol):
                 conditions.append(f"[System.IterationPath] = '{iteration_path}'")
 
             where_clause = " AND ".join(conditions) if conditions else "1 = 1"
-            wiql_query = {
-                "query": f"SELECT [System.Id] FROM WorkItems WHERE {where_clause}"
-            }
+            wiql_query = {"query": f"SELECT [System.Id] FROM WorkItems WHERE {where_clause}"}
 
         try:
-            wiql_result = await self.client.post(
-                "wit/wiql", data=wiql_query, params={"api-version": API_VERSION}
-            )
+            wiql_result = await self.client.post("wit/wiql", data=wiql_query, params={"api-version": API_VERSION})
 
             work_items = wiql_result.get("workItems", [])
             if not work_items:
-                return json.dumps(
-                    {"results": [], "total": 0, "message": "No results found."}
-                )
+                return json.dumps({"results": [], "total": 0, "message": "No results found."})
 
             item_ids = [str(item["id"]) for item in work_items[:max_results]]
 
@@ -768,18 +703,20 @@ class AzureConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_tickets_needing_my_reply(self, my_display_name: str) -> str:
         """Find active tickets assigned to you where the last comment was not written by you (i.e. need your reply)."""
         try:
+            wiql = (
+                f"SELECT [System.Id] FROM WorkItems"
+                f" WHERE [System.State] <> 'Closed'"
+                f" AND [System.State] <> 'Completed'"
+                f" AND [System.AssignedTo] = '{my_display_name}'"
+            )
             wiql_result = await self.client.post(
                 "wit/wiql",
-                data={
-                    "query": f"SELECT [System.Id] FROM WorkItems WHERE [System.State] <> 'Closed' AND [System.State] <> 'Completed' AND [System.AssignedTo] = '{my_display_name}'"
-                },
+                data={"query": wiql},
                 params={"api-version": API_VERSION},
             )
             work_items = wiql_result.get("workItems", [])
@@ -796,9 +733,7 @@ class AzureConnector(TicketProtocol):
 
             for tid in item_ids:
                 try:
-                    item_data = await self.client.get(
-                        f"wit/workitems/{tid}", params={"api-version": API_VERSION}
-                    )
+                    item_data = await self.client.get(f"wit/workitems/{tid}", params={"api-version": API_VERSION})
                     title = item_data.get("fields", {}).get("System.Title", "Untitled")
 
                     comments_data = await self.client.get(
@@ -834,9 +769,7 @@ class AzureConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     # ──────────────────────────────────────────────
     #  LINKS
@@ -888,9 +821,7 @@ class AzureConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_ticket_relations(self, ticket_id: int) -> str:
         """Retrieve all links/relations of a Ticket."""
@@ -916,9 +847,7 @@ class AzureConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     # ──────────────────────────────────────────────
     #  ITERATIONS / BOARDS
@@ -927,9 +856,7 @@ class AzureConnector(TicketProtocol):
     async def get_iterations(self) -> str:
         """Retrieve all iterations (sprints) from the Azure DevOps project."""
         try:
-            data = await self.client.get(
-                "work/teamsettings/iterations", params={"api-version": API_VERSION}
-            )
+            data = await self.client.get("work/teamsettings/iterations", params={"api-version": API_VERSION})
             iterations = data.get("value", [])
             result = []
             for it in iterations:
@@ -943,13 +870,9 @@ class AzureConnector(TicketProtocol):
                         "state": it.get("attributes", {}).get("timeFrame", ""),
                     }
                 )
-            return json.dumps(
-                {"iterations": result, "total": len(result)}, ensure_ascii=False
-            )
+            return json.dumps({"iterations": result, "total": len(result)}, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def move_to_iteration(self, ticket_id: int, iteration_path: str) -> str:
         """Move a Ticket to a different iteration (sprint).
@@ -979,9 +902,7 @@ class AzureConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_area_paths(self) -> str:
         """Retrieve all area paths from the Azure DevOps project."""
@@ -992,6 +913,4 @@ class AzureConnector(TicketProtocol):
             )
             return json.dumps(data, indent=2, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})

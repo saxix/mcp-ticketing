@@ -36,9 +36,7 @@ class TicketManager(TicketProtocol):
             connector_cls = BACKENDS[backend.lower()]
         except KeyError:
             available = ", ".join(sorted(BACKENDS))
-            raise ValueError(
-                f"Unknown backend '{backend}'. Available backends: {available}"
-            ) from None
+            raise ValueError(f"Unknown backend '{backend}'. Available backends: {available}") from None
         return connector_cls()
 
     # ──────────────────────────────────────────────
@@ -79,9 +77,7 @@ class TicketManager(TicketProtocol):
         """Append a Mermaid diagram to a ticket."""
         return await self._strategy.add_mermaid(ticket_id, diagram, title, section)
 
-    async def add_ticket_image(
-        self, ticket_id: int, image_path: str, comment: str = ""
-    ) -> str:
+    async def add_ticket_image(self, ticket_id: int, image_path: str, comment: str = "") -> str:
         """Attach an image file to a ticket."""
         return await self._strategy.add_ticket_image(ticket_id, image_path, comment)
 

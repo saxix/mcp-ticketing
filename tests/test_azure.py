@@ -6,6 +6,9 @@ import re
 import httpx
 import pytest
 
+from mcp_ticketing.azure_connector import AzureConnector
+from mcp_ticketing.ticket_manager import TicketManager
+
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.skipif(
@@ -32,13 +35,6 @@ def _check(resp: str) -> dict:
         pytest.skip(f"Skipping — API error: {parsed['error']}")
     return parsed
 
-
-# ──────────────────────────────────────────────
-#  CONNECTIVITY
-# ──────────────────────────────────────────────
-
-from mcp_ticketing.azure_connector import AzureConnector
-from mcp_ticketing.ticket_manager import TicketManager
 
 manager = TicketManager(strategy=AzureConnector())
 
@@ -103,9 +99,7 @@ async def test_create_ticket_missing_title():
 
 
 async def test_search_tickets_custom_query():
-    result = await search_tickets(
-        query="SELECT [System.Id] FROM WorkItems WHERE [System.State] = 'Active'"
-    )
+    result = await search_tickets(query="SELECT [System.Id] FROM WorkItems WHERE [System.State] = 'Active'")
     parsed = _check(result)
     assert isinstance(parsed["results"], list)
     assert isinstance(parsed["total"], int)
@@ -261,9 +255,7 @@ async def test_link_two_tickets():
 
 
 async def test_add_comment_empty_text():
-    r = await create_ticket(
-        ticket_type="Task", title="[PYTEST] Empty comment test", priority=3
-    )
+    r = await create_ticket(ticket_type="Task", title="[PYTEST] Empty comment test", priority=3)
     p = _check(r)
     tid = p["id"]
 
@@ -285,8 +277,7 @@ async def test_add_ticket_image_invalid_file(tmp_path):
 
 async def test_add_ticket_image(tmp_path):
     png = base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
-        "AAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
     )
     image = tmp_path / "pixel.png"
     image.write_bytes(png)
@@ -344,9 +335,7 @@ async def test_add_mermaid():
 
     from mcp_ticketing.azure_connector import API_VERSION
 
-    item = await manager._strategy.client.get(
-        f"wit/workitems/{tid}", params={"api-version": API_VERSION}
-    )
+    item = await manager._strategy.client.get(f"wit/workitems/{tid}", params={"api-version": API_VERSION})
     description = item.get("fields", {}).get("System.Description", "")
     assert re.search(r'<img src="[^"]+\?fileName=mermaid-\d+\.png"', description)
     assert "Flow" in description

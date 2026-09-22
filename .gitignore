@@ -9,6 +9,7 @@ wheels/
 *.egg-info
 !.gitignore
 !.env.example
-
+!.github
+!.pre-commit-config.yaml
 # Documentation build output
 site/

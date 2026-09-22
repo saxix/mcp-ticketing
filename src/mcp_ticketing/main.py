@@ -11,14 +11,21 @@ directly on the command line, which bypasses the environment::
     uv run mcp-ticketing github --check --owner saxix --repo myrepo --token <token>
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
 import os
 import sys
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from mcp.server.mcpserver import MCPServer
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from mcp_ticketing.ticket_manager import TicketManager
 
 # The connectors read their configuration from the environment at import
 # time, so ``TicketManager`` is imported lazily (see ``_resolve``) after any
@@ -28,7 +35,7 @@ from mcp.server.mcpserver import MCPServer
 mcp = MCPServer("mcp-ticketing")
 
 # Reassigned by ``_resolve`` once the CLI arguments have been processed.
-manager = None
+manager: TicketManager | None = None
 
 # CLI flag -> environment variable mapping per backend. Flags that do not
 # map cleanly onto a backend's credentials are simply ignored.
@@ -68,9 +75,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Verify the connection and credentials, then exit without starting the server.",
     )
     parser.add_argument("--owner", help="Owner/org override for the selected backend.")
-    parser.add_argument(
-        "--repo", help="Project/repo override for the selected backend."
-    )
+    parser.add_argument("--repo", help="Project/repo override for the selected backend.")
     parser.add_argument("--token", help="Token override for the selected backend.")
     return parser.parse_args(argv)
 
@@ -112,7 +117,11 @@ def _resolve(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 @mcp.tool()
 async def get_ticket_types() -> str:
-    """Retrieve all valid ticket types configured for the project (e.g. Task, Bug, User Story, Issue, Change Request)."""
+    """Retrieve all valid ticket types configured for the project.
+
+    E.g. Task, Bug, User Story, Issue, Change Request.
+    """
+    assert manager is not None
     return await manager.get_ticket_types()
 
 
@@ -124,18 +133,21 @@ async def get_ticket_types() -> str:
 @mcp.tool()
 async def get_ticket(ticket_id: int) -> str:
     """Retrieve full details of a ticket by its ID."""
+    assert manager is not None
     return await manager.get_ticket(ticket_id)
 
 
 @mcp.tool()
 async def get_ticket_comments(ticket_id: int) -> str:
     """Retrieve all comments associated with a ticket."""
+    assert manager is not None
     return await manager.get_ticket_comments(ticket_id)
 
 
 @mcp.tool()
 async def add_comment(ticket_id: int, text: str) -> str:
     """Add a comment to a ticket."""
+    assert manager is not None
     return await manager.add_comment(ticket_id, text)
 
 
@@ -161,6 +173,7 @@ async def add_mermaid(
             Azure: attachment label.
         section: Section heading used by GitHub (default 'Diagrams')
     """
+    assert manager is not None
     return await manager.add_mermaid(ticket_id, diagram, title, section)
 
 
@@ -172,8 +185,12 @@ async def add_ticket_image(ticket_id: int, image_path: str, comment: str = "") -
         ticket_id: ID of the ticket (work item ID or issue number)
         image_path: Local path to an image file (PNG, JPEG, GIF, WebP, ...)
         comment: Optional comment shown next to the image.
-            Azure: attachment label. GitHub: text above the image in a new issue comment (images are uploaded into the repo and referenced via Markdown).
+            Azure: attachment label.
+            GitHub: text above the image in a new issue comment
+            (images are uploaded into the repo and referenced via
+            Markdown).
     """
+    assert manager is not None
     return await manager.add_ticket_image(ticket_id, image_path, comment)
 
 
@@ -190,10 +207,13 @@ async def create_ticket(
 ) -> str:
     """Create a new ticket.
 
-    If ticket_type is not provided, returns a list of available types — call get_ticket_types() first to see valid options.
+    If ticket_type is not provided, returns a list of available
+    types — call get_ticket_types() first to see valid options.
 
     Args:
-        ticket_type: Ticket type (e.g. 'Task', 'Bug', 'User Story', 'Issue', 'Change Request'). Leave empty to retrieve available types.
+        ticket_type: Ticket type (e.g. 'Task', 'Bug', 'User Story',
+            'Issue', 'Change Request').
+            Leave empty to retrieve available types.
         title: Ticket title
         description: HTML description (Azure) or Markdown body (GitHub) of the ticket
         assigned_to: Assignee display name (Azure) or username (GitHub)
@@ -202,6 +222,7 @@ async def create_ticket(
         area_path: Area path (Azure; defaults to project area). Ignored for GitHub.
         iteration_path: Iteration path (Azure) or milestone title (GitHub)
     """
+    assert manager is not None
     return await manager.create_ticket(
         ticket_type=ticket_type,
         title=title,
@@ -239,6 +260,7 @@ async def update_ticket(
         area_path: New area path (Azure). Ignored for GitHub.
         iteration_path: New iteration path (Azure) or milestone title (GitHub)
     """
+    assert manager is not None
     return await manager.update_ticket(
         ticket_id=ticket_id,
         title=title,
@@ -282,6 +304,7 @@ async def search_tickets(
         iteration_path: Iteration path filter (Azure) or milestone title (GitHub)
         max_results: Maximum results (Azure default 20 / max 200, GitHub default 20 / max 100)
     """
+    assert manager is not None
     return await manager.search_tickets(
         query=query,
         ticket_type=ticket_type,
@@ -297,6 +320,7 @@ async def search_tickets(
 @mcp.tool()
 async def get_tickets_needing_my_reply(my_display_name: str) -> str:
     """Find active tickets assigned to you where the last comment was not written by you (i.e. need your reply)."""
+    assert manager is not None
     return await manager.get_tickets_needing_my_reply(my_display_name)
 
 
@@ -324,6 +348,7 @@ async def link_tickets(
             Ignored for GitHub (always adds a cross-reference).
         comment: Optional comment on the link
     """
+    assert manager is not None
     return await manager.link_tickets(
         source_id=source_id,
         target_id=target_id,
@@ -335,6 +360,7 @@ async def link_tickets(
 @mcp.tool()
 async def get_ticket_relations(ticket_id: int) -> str:
     """Retrieve all links/relations (Azure) or cross-references and linked PRs (GitHub) of a ticket."""
+    assert manager is not None
     return await manager.get_ticket_relations(ticket_id)
 
 
@@ -346,6 +372,7 @@ async def get_ticket_relations(ticket_id: int) -> str:
 @mcp.tool()
 async def get_iterations() -> str:
     """Retrieve all iterations/sprints (Azure) or milestones (GitHub) from the project."""
+    assert manager is not None
     return await manager.get_iterations()
 
 
@@ -357,12 +384,14 @@ async def move_to_iteration(ticket_id: int, iteration_path: str) -> str:
         ticket_id: ID of the ticket to move
         iteration_path: Full iteration path (e.g. 'Project\\Sprint 1') or milestone title
     """
+    assert manager is not None
     return await manager.move_to_iteration(ticket_id, iteration_path)
 
 
 @mcp.tool()
 async def get_area_paths() -> str:
     """Retrieve all area paths (Azure) or labels (GitHub) from the project."""
+    assert manager is not None
     return await manager.get_area_paths()
 
 
@@ -374,6 +403,7 @@ async def get_area_paths() -> str:
 def main() -> None:
     """Run the MCP server, or verify the backend connection with ``--check``."""
     args = _resolve()
+    assert manager is not None
 
     if args.check:
         try:

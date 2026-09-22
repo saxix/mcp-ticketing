@@ -3,13 +3,13 @@ import os
 
 import pytest
 
+from mcp_ticketing.github_connector import GithubConnector
+from mcp_ticketing.ticket_manager import TicketManager
+
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.skipif(
-        not all(
-            os.getenv(v, "")
-            for v in ["MCP_GITHUB_OWNER", "MCP_GITHUB_REPO", "MCP_GITHUB_TOKEN"]
-        ),
+        not all(os.getenv(v, "") for v in ["MCP_GITHUB_OWNER", "MCP_GITHUB_REPO", "MCP_GITHUB_TOKEN"]),
         reason="GitHub env vars not set",
     ),
 ]
@@ -25,13 +25,6 @@ def _check(resp: str) -> dict:
         pytest.skip(f"Skipping — API error: {parsed['error']}")
     return parsed
 
-
-# ──────────────────────────────────────────────
-#  CONNECTIVITY
-# ──────────────────────────────────────────────
-
-from mcp_ticketing.github_connector import GithubConnector
-from mcp_ticketing.ticket_manager import TicketManager
 
 manager = TicketManager(strategy=GithubConnector())
 

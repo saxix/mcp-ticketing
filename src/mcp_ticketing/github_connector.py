@@ -14,9 +14,7 @@ from mcp_ticketing.protocol import TicketProtocol
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("mcp-ticketing-github")
 
 GITHUB_OWNER = os.getenv("MCP_GITHUB_OWNER", "")
@@ -43,7 +41,7 @@ class GitHubClient:
             "X-GitHub-Api-Version": "2022-11-28",
         }
 
-    async def get(self, path: str, params: dict | None = None) -> dict[str, Any]:
+    async def get(self, path: str, params: dict | None = None) -> Any:
         url = f"{self.base_url}/{path}"
         async with self.get_client() as client:
             response = await client.get(url, headers=self._headers(), params=params)
@@ -55,12 +53,10 @@ class GitHubClient:
         path: str,
         data: Any,
         params: dict | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         url = f"{self.base_url}/{path}"
         async with self.get_client() as client:
-            response = await client.post(
-                url, headers=self._headers(), json=data, params=params
-            )
+            response = await client.post(url, headers=self._headers(), json=data, params=params)
             response.raise_for_status()
             return response.json()
 
@@ -69,39 +65,33 @@ class GitHubClient:
         path: str,
         data: Any,
         params: dict | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         url = f"{self.base_url}/{path}"
         async with self.get_client() as client:
-            response = await client.patch(
-                url, headers=self._headers(), json=data, params=params
-            )
+            response = await client.patch(url, headers=self._headers(), json=data, params=params)
             response.raise_for_status()
             return response.json()
 
-    async def search(self, query: str, params: dict | None = None) -> dict[str, Any]:
+    async def search(self, query: str, params: dict | None = None) -> Any:
         url = "https://api.github.com/search/issues"
         search_params = {
             "q": f"{query} repo:{self.owner}/{self.repo}",
             **(params or {}),
         }
         async with self.get_client() as client:
-            response = await client.get(
-                url, headers=self._headers(), params=search_params
-            )
+            response = await client.get(url, headers=self._headers(), params=search_params)
             response.raise_for_status()
             return response.json()
 
 
 def format_ticket(issue: dict) -> str:
     labels = issue.get("labels", [])
-    label_names = [l.get("name", "") for l in labels if isinstance(l, dict)]
+    label_names = [label.get("name", "") for label in labels if isinstance(label, dict)]
     assignee = issue.get("assignee", {})
     assigned_to = assignee.get("login", "Unassigned") if assignee else "Unassigned"
     milestone = issue.get("milestone")
     iteration_path = milestone.get("title", "") if milestone else ""
-    priority_label = next(
-        (l for l in label_names if l.lower().startswith("priority:")), ""
-    )
+    priority_label = next((pl for pl in label_names if pl.lower().startswith("priority:")), "")
     return json.dumps(
         {
             "id": issue.get("number"),
@@ -121,9 +111,7 @@ def format_ticket(issue: dict) -> str:
     )
 
 
-def append_mermaid_markdown(
-    body: str, diagram: str, title: str = "", section: str = "Diagrams"
-) -> str:
+def append_mermaid_markdown(body: str, diagram: str, title: str = "", section: str = "Diagrams") -> str:
     """Append a Mermaid diagram at the bottom of a Markdown ticket body.
 
     Diagrams are collected under a ``## <section>`` heading (default
@@ -179,9 +167,7 @@ class GithubConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     # ──────────────────────────────────────────────
     #  TICKET CRUD
@@ -193,9 +179,7 @@ class GithubConnector(TicketProtocol):
             data = await self.client.get(f"issues/{ticket_id}")
             return format_ticket(data)
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_ticket_comments(self, ticket_id: int) -> str:
         """Retrieve all comments associated with a Ticket (GitHub Issue)."""
@@ -225,9 +209,7 @@ class GithubConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def add_comment(self, ticket_id: int, text: str) -> str:
         """Add a comment to a Ticket (GitHub Issue)."""
@@ -245,9 +227,7 @@ class GithubConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def add_mermaid(
         self,
@@ -288,9 +268,7 @@ class GithubConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def create_ticket(
         self,
@@ -327,9 +305,7 @@ class GithubConnector(TicketProtocol):
         milestone_number = None
         if iteration_path:
             try:
-                milestones = await self.client.get(
-                    "milestones", params={"state": "open"}
-                )
+                milestones = await self.client.get("milestones", params={"state": "open"})
                 for m in milestones:
                     if m.get("title") == iteration_path:
                         milestone_number = m.get("number")
@@ -361,9 +337,7 @@ class GithubConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def update_ticket(
         self,
@@ -416,9 +390,7 @@ class GithubConnector(TicketProtocol):
                 payload["labels"] = labels
         if iteration_path:
             try:
-                milestones = await self.client.get(
-                    "milestones", params={"state": "open"}
-                )
+                milestones = await self.client.get("milestones", params={"state": "open"})
                 for m in milestones:
                     if m.get("title") == iteration_path:
                         payload["milestone"] = m.get("number")
@@ -440,9 +412,7 @@ class GithubConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     # ──────────────────────────────────────────────
     #  SEARCH / QUERY
@@ -496,9 +466,7 @@ class GithubConnector(TicketProtocol):
         search_query = " ".join(search_parts)
 
         try:
-            data = await self.client.search(
-                search_query, params={"per_page": str(max_results)}
-            )
+            data = await self.client.search(search_query, params={"per_page": str(max_results)})
             items = data.get("items", [])
             results = []
             for issue in items:
@@ -513,9 +481,7 @@ class GithubConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_tickets_needing_my_reply(self, my_display_name: str) -> str:
         """Find active tickets assigned to you where the last comment was not written by you (i.e. need your reply)."""
@@ -571,9 +537,7 @@ class GithubConnector(TicketProtocol):
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     # ──────────────────────────────────────────────
     #  LINKS
@@ -613,9 +577,7 @@ class GithubConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_ticket_relations(self, ticket_id: int) -> str:
         """Retrieve all cross-references and linked PRs of a Ticket (GitHub Issue)."""
@@ -627,9 +589,7 @@ class GithubConnector(TicketProtocol):
             linked_issues = set()
             linked_prs = set()
 
-            cross_ref_pattern = re.compile(
-                r"(?:^|\s)#(\d+)(?:\s|$|[.,;:!?\)])", re.MULTILINE
-            )
+            cross_ref_pattern = re.compile(r"(?:^|\s)#(\d+)(?:\s|$|[.,;:!?\)])", re.MULTILINE)
 
             for text in [body] + [c.get("body", "") or "" for c in comments]:
                 for match in cross_ref_pattern.finditer(text):
@@ -637,9 +597,7 @@ class GithubConnector(TicketProtocol):
 
             timeline_url = f"issues/{ticket_id}/timeline"
             try:
-                timeline = await self.client.get(
-                    timeline_url, params={"per_page": "100"}
-                )
+                timeline = await self.client.get(timeline_url, params={"per_page": "100"})
                 for event in timeline:
                     if event.get("event") == "cross-referenced":
                         source = event.get("source", {}).get("issue", {})
@@ -654,22 +612,16 @@ class GithubConnector(TicketProtocol):
 
             result = []
             for pr_num in sorted(linked_prs):
-                result.append(
-                    {"type": "pull_request", "target_id": str(pr_num), "comment": ""}
-                )
+                result.append({"type": "pull_request", "target_id": str(pr_num), "comment": ""})
             for issue_num in sorted(linked_issues):
-                result.append(
-                    {"type": "related", "target_id": str(issue_num), "comment": ""}
-                )
+                result.append({"type": "related", "target_id": str(issue_num), "comment": ""})
 
             return json.dumps(
                 {"ticket_id": ticket_id, "relations": result, "total": len(result)},
                 ensure_ascii=False,
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     # ──────────────────────────────────────────────
     #  ITERATIONS / MILESTONES
@@ -678,9 +630,7 @@ class GithubConnector(TicketProtocol):
     async def get_iterations(self) -> str:
         """Retrieve all milestones from the GitHub repository (mapped to iterations)."""
         try:
-            data = await self.client.get(
-                "milestones", params={"state": "all", "per_page": "100"}
-            )
+            data = await self.client.get("milestones", params={"state": "all", "per_page": "100"})
             result = []
             for m in data:
                 result.append(
@@ -693,13 +643,9 @@ class GithubConnector(TicketProtocol):
                         "state": m.get("state", ""),
                     }
                 )
-            return json.dumps(
-                {"iterations": result, "total": len(result)}, ensure_ascii=False
-            )
+            return json.dumps({"iterations": result, "total": len(result)}, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def move_to_iteration(self, ticket_id: int, iteration_path: str) -> str:
         """Move a Ticket (GitHub Issue) to a milestone.
@@ -737,9 +683,7 @@ class GithubConnector(TicketProtocol):
                 }
             )
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_area_paths(self) -> str:
         """Retrieve all labels from the GitHub repository (mapped to area paths)."""
@@ -754,10 +698,6 @@ class GithubConnector(TicketProtocol):
                         "color": label.get("color", ""),
                     }
                 )
-            return json.dumps(
-                {"area_paths": result, "total": len(result)}, ensure_ascii=False
-            )
+            return json.dumps({"area_paths": result, "total": len(result)}, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
-            return json.dumps(
-                {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-            )
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})

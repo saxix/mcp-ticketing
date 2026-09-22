@@ -53,9 +53,7 @@ class TicketProtocol(ABC):
         attaches it to the work item.
         """
 
-    async def add_ticket_image(
-        self, ticket_id: int, image_path: str, comment: str = ""
-    ) -> str:
+    async def add_ticket_image(self, ticket_id: int, image_path: str, comment: str = "") -> str:
         """Attach an image file to a ticket.
 
         Backends that do not support image attachments inherit this default

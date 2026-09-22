@@ -49,9 +49,7 @@ def test_github_flags_set_env(monkeypatch):
     for var in CLI_ENV_MAP["github"].values():
         monkeypatch.delenv(var, raising=False)
 
-    args = _parse(
-        "github", "--owner", "acme", "--repo", "tickets", "--token", "tok-123"
-    )
+    args = _parse("github", "--owner", "acme", "--repo", "tickets", "--token", "tok-123")
     _apply_cli_env(args)
 
     assert os.getenv("MCP_GITHUB_OWNER") == "acme"
