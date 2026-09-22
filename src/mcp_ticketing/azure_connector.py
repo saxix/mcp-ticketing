@@ -135,6 +135,31 @@ def format_ticket(item: dict) -> str:
     )
 
 
+def _markdown_to_html(text: str) -> str:
+    """Convert Markdown to HTML for Azure DevOps System.Description (HTML field).
+
+    Azure work items store description as HTML. If the caller passes Markdown
+    (headings, **bold**, lists, tables, fenced code, blockquotes, links, etc.)
+    we render it to HTML so it displays correctly. Plain HTML is passed through
+    unchanged (markdown library preserves raw HTML blocks).
+    """
+    if not text:
+        return text
+    # Heuristic: if text already contains HTML block tags and no Markdown markers, keep as-is
+    # to avoid double-wrapping plain HTML. Markdown markers trigger conversion.
+    markdown_markers = ("**", "__", "```", "## ", " - ", "- ", "* ", "1. ", "> ", "[", "](", " | ", "|")
+    looks_like_markdown = any(m in text for m in markdown_markers)
+    looks_like_html = text.strip().startswith("<") and ">" in text
+    if looks_like_html and not looks_like_markdown:
+        return text
+    try:
+        import markdown  # local import so missing dep doesn't break module import
+
+        return markdown.markdown(text, extensions=["extra", "tables", "fenced_code", "codehilite"])
+    except ImportError:
+        return text
+
+
 def _render_mermaid_png(diagram: str, scale: float = 2.0) -> bytes:
     """Render a Mermaid diagram source to a high-resolution PNG.
 
@@ -245,11 +270,16 @@ class AzureConnector(TicketProtocol):
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def add_comment(self, ticket_id: int, text: str) -> str:
-        """Add a comment to a Ticket in Azure DevOps."""
+        """Add a comment to a Ticket in Azure DevOps.
+
+        Azure comments are rendered as HTML in the UI; Markdown is converted
+        to HTML before sending so **bold**, lists, tables, fenced code, etc.
+        display correctly (same as System.Description).
+        """
         try:
             data = await self.client.post(
                 f"wit/workitems/{ticket_id}/comments",
-                data={"text": text},
+                data={"text": _markdown_to_html(text)},
                 content_type="application/json",
                 params={"api-version": COMMENT_API_VERSION},
             )
@@ -481,7 +511,7 @@ class AzureConnector(TicketProtocol):
                 {
                     "op": "add",
                     "path": "/fields/System.Description",
-                    "value": description,
+                    "value": _markdown_to_html(description),
                 }
             )
         if assigned_to:
@@ -562,7 +592,7 @@ class AzureConnector(TicketProtocol):
                 {
                     "op": "add",
                     "path": "/fields/System.Description",
-                    "value": description,
+                    "value": _markdown_to_html(description),
                 }
             )
         if assigned_to:

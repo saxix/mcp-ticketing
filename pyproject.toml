@@ -9,6 +9,7 @@ authors = [{ name = "Stefano Apostolico", email = "s.apostolico@gmail.com" }]
 keywords = ["mcp", "gitHub", "azure", "azure-devops", "ticketing", "issues", "model-context-protocol"]
 dependencies = [
     "httpx>=0.28.1",
+    "markdown>=3.0",
     "mcp-server>=0.1.4",
     "mermaidx>=0.9",
     "python-dotenv>=1.0.0",

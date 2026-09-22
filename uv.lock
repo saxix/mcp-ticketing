@@ -787,6 +787,7 @@ version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
+    { name = "markdown" },
     { name = "mcp-server" },
     { name = "mermaidx" },
     { name = "python-dotenv" },
@@ -815,6 +816,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "markdown", specifier = ">=3.0" },
     { name = "mcp-server", specifier = ">=0.1.4" },
     { name = "mermaidx", specifier = ">=0.9" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
