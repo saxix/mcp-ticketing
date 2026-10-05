@@ -34,7 +34,9 @@ Retrieve full details of a ticket.
 |------|------|----------|-------------|
 | `ticket_id` | int | Yes | Ticket ID (work item ID or issue number) |
 
-**Returns:** JSON with `id`, `title`, `type`, `state`, `assigned_to`, `tags`, `area_path`, `iteration_path`, `priority`, `created_date`, `changed_date`.
+**Returns:** JSON with `id`, `title`, `type`, `state`, `assigned_to`, `tags`, `area_path`, `iteration_path`, `priority`, `created_date`, `changed_date`, `description`.
+
+`description` holds the ticket body: `System.Description` as HTML on Azure DevOps, the issue `body` as Markdown on GitHub. It is returned by `get_ticket` only — `search_tickets` omits it to keep list responses light.
 
 ---
 

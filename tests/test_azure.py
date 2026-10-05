@@ -220,6 +220,53 @@ async def test_create_ticket_with_all_fields():
     assert p["success"] is True
 
 
+async def test_description_roundtrip():
+    """The description written by create_ticket must come back from get_ticket."""
+    marker = "Description roundtrip marker — Payee Type, GL Code"
+    r = await create_ticket(
+        ticket_type="Task",
+        title="[PYTEST] Description roundtrip",
+        description=f"## Problem\n\n{marker}\n\n- make Payee Type configurable",
+    )
+    p = _check(r)
+    tid = p["id"]
+
+    r = await get_ticket(tid)
+    p = _check(r)
+    assert p["id"] == tid
+    assert marker in p["description"]
+    assert "make Payee Type configurable" in p["description"]
+
+    r = await update_ticket(ticket_id=tid, description="Replaced by pytest")
+    p = _check(r)
+    assert p["success"] is True
+
+    r = await get_ticket(tid)
+    p = _check(r)
+    assert "Replaced by pytest" in p["description"]
+    assert marker not in p["description"]
+
+    await update_ticket(ticket_id=tid, state="Closed")
+
+
+async def test_search_tickets_omits_description():
+    """List responses must stay light: no description key in search results."""
+    r = await create_ticket(
+        ticket_type="Task",
+        title="[PYTEST] Search projection",
+        description="Secret body that must not leak into search results",
+    )
+    p = _check(r)
+    tid = p["id"]
+
+    r = await search_tickets(query=f"SELECT [System.Id] FROM WorkItems WHERE [System.Id] = {tid}")
+    p = _check(r)
+    assert p["total"] == 1
+    assert "description" not in p["results"][0]
+
+    await update_ticket(ticket_id=tid, state="Closed")
+
+
 async def test_link_two_tickets():
     r1 = await create_ticket(
         ticket_type="Task",

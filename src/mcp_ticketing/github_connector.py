@@ -84,7 +84,13 @@ class GitHubClient:
             return response.json()
 
 
-def format_ticket(issue: dict) -> str:
+def format_ticket(issue: dict, include_description: bool = False) -> str:
+    """Project an issue into the flat JSON shape used by the MCP tools.
+
+    The body is opt-in: it is only included when ``include_description`` is
+    True, so that list endpoints (search_tickets) stay light while
+    single-ticket reads (get_ticket) expose the body.
+    """
     labels = issue.get("labels", [])
     label_names = [label.get("name", "") for label in labels if isinstance(label, dict)]
     assignee = issue.get("assignee", {})
@@ -92,23 +98,22 @@ def format_ticket(issue: dict) -> str:
     milestone = issue.get("milestone")
     iteration_path = milestone.get("title", "") if milestone else ""
     priority_label = next((pl for pl in label_names if pl.lower().startswith("priority:")), "")
-    return json.dumps(
-        {
-            "id": issue.get("number"),
-            "title": issue.get("title", ""),
-            "type": "Issue",
-            "state": issue.get("state", ""),
-            "assigned_to": assigned_to,
-            "tags": "; ".join(label_names),
-            "area_path": "",
-            "iteration_path": iteration_path,
-            "priority": priority_label,
-            "created_date": issue.get("created_at", ""),
-            "changed_date": issue.get("updated_at", ""),
-        },
-        indent=2,
-        ensure_ascii=False,
-    )
+    ticket = {
+        "id": issue.get("number"),
+        "title": issue.get("title", ""),
+        "type": "Issue",
+        "state": issue.get("state", ""),
+        "assigned_to": assigned_to,
+        "tags": "; ".join(label_names),
+        "area_path": "",
+        "iteration_path": iteration_path,
+        "priority": priority_label,
+        "created_date": issue.get("created_at", ""),
+        "changed_date": issue.get("updated_at", ""),
+    }
+    if include_description:
+        ticket["description"] = issue.get("body", "") or ""
+    return json.dumps(ticket, indent=2, ensure_ascii=False)
 
 
 def append_mermaid_markdown(body: str, diagram: str, title: str = "", section: str = "Diagrams") -> str:
@@ -174,10 +179,13 @@ class GithubConnector(TicketProtocol):
     # ──────────────────────────────────────────────
 
     async def get_ticket(self, ticket_id: int) -> str:
-        """Retrieve full details of a Ticket (GitHub Issue) by number."""
+        """Retrieve full details of a Ticket (GitHub Issue) by number.
+
+        Includes the Markdown body in the ``description`` key.
+        """
         try:
             data = await self.client.get(f"issues/{ticket_id}")
-            return format_ticket(data)
+            return format_ticket(data, include_description=True)
         except httpx.HTTPStatusError as e:
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 

@@ -112,27 +112,34 @@ class AzdoClient:
             return response.json()
 
 
-def format_ticket(item: dict) -> str:
+def format_ticket(item: dict, include_description: bool = False) -> str:
+    """Project a work item into the flat JSON shape used by the MCP tools.
+
+    The description (System.Description) is opt-in: it is only included when
+    ``include_description`` is True, so that list endpoints (search_tickets)
+    stay light while single-ticket reads (get_ticket) expose the body.
+    """
     fields = item.get("fields", {})
     assigned = fields.get("System.AssignedTo", {})
     assigned_name = assigned.get("displayName", "Unassigned") if isinstance(assigned, dict) else str(assigned)
-    return json.dumps(
-        {
-            "id": item.get("id"),
-            "title": fields.get("System.Title", ""),
-            "type": fields.get("System.WorkItemType", ""),
-            "state": fields.get("System.State", ""),
-            "assigned_to": assigned_name,
-            "tags": fields.get("System.Tags", ""),
-            "area_path": fields.get("System.AreaPath", ""),
-            "iteration_path": fields.get("System.IterationPath", ""),
-            "priority": fields.get("Microsoft.VSTS.Common.Priority"),
-            "created_date": fields.get("System.CreatedDate", ""),
-            "changed_date": fields.get("System.ChangedDate", ""),
-        },
-        indent=2,
-        ensure_ascii=False,
-    )
+    ticket = {
+        "id": item.get("id"),
+        "title": fields.get("System.Title", ""),
+        "type": fields.get("System.WorkItemType", ""),
+        "state": fields.get("System.State", ""),
+        "assigned_to": assigned_name,
+        "tags": fields.get("System.Tags", ""),
+        "area_path": fields.get("System.AreaPath", ""),
+        "iteration_path": fields.get("System.IterationPath", ""),
+        "priority": fields.get("Microsoft.VSTS.Common.Priority"),
+        "created_date": fields.get("System.CreatedDate", ""),
+        "changed_date": fields.get("System.ChangedDate", ""),
+    }
+    if include_description:
+        # Kept as raw HTML: add_mermaid embeds <img> tags here, so stripping
+        # markup would silently drop attachments referenced by the description.
+        ticket["description"] = fields.get("System.Description", "") or ""
+    return json.dumps(ticket, indent=2, ensure_ascii=False)
 
 
 def _markdown_to_html(text: str) -> str:
@@ -228,10 +235,13 @@ class AzureConnector(TicketProtocol):
     # ──────────────────────────────────────────────
 
     async def get_ticket(self, ticket_id: int) -> str:
-        """Retrieve full details of a Ticket (Task, Bug, User Story) from Azure DevOps."""
+        """Retrieve full details of a Ticket (Task, Bug, User Story) from Azure DevOps.
+
+        Includes the HTML description in the ``description`` key.
+        """
         try:
             data = await self.client.get(f"wit/workitems/{ticket_id}", params={"api-version": API_VERSION})
-            return format_ticket(data)
+            return format_ticket(data, include_description=True)
         except httpx.HTTPStatusError as e:
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
