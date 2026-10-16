@@ -33,11 +33,9 @@ REDMINE_PROJECT = os.getenv("MCP_REDMINE_PROJECT", "")
 # "false" or "0" disables TLS verification; a path points to a CA bundle; empty keeps default.
 REDMINE_VERIFY_SSL = os.getenv("MCP_REDMINE_VERIFY_SSL", "")
 
-# Mapping from the protocol's 1-4 priority scale to Redmine's built-in
-# priority IDs (Low=4, Normal=3, High=2, Urgent=1). The "Immediate" priority
-# (id 5) is custom-configured per installation and is never produced.
-PRIORITY_TO_ID = {1: 1, 2: 2, 3: 3, 4: 4}
-PRIORITY_ID_TO_NAME = {1: "Urgent", 2: "High", 3: "Normal", 4: "Low", 5: "Immediate"}
+# The protocol's 1-4 priority scale (Urgent, High, Normal, Low) is mapped to
+# instance priority IDs by name, not by numeric ID, because priority IDs are
+# per-instance. See ``RedmineConnector._resolve_priority``.
 
 # Generic state words accepted by update_ticket / search_tickets, mapped to
 # Redmine status names to try (the first match wins). Includes both English
@@ -106,6 +104,8 @@ class RedmineClient:
         async with self.get_client() as client:
             response = await client.post(url, headers=self._headers(), json=data, params=params or {})
             response.raise_for_status()
+            if response.status_code == 204 or not response.content:
+                return {}
             return response.json()
 
     async def put(self, path: str, data: Any, params: dict | None = None) -> Any:
@@ -113,6 +113,9 @@ class RedmineClient:
         async with self.get_client() as client:
             response = await client.put(url, headers=self._headers(), json=data, params=params or {})
             response.raise_for_status()
+            # Old Redmine returns 204 No Content (empty body) on success.
+            if response.status_code == 204 or not response.content:
+                return {}
             return response.json()
 
 
@@ -239,6 +242,7 @@ class RedmineConnector(TicketProtocol):
         self.client = client or RedmineClient()
         self._project: dict | None = None
         self._statuses: list[dict] | None = None
+        self._priorities: list[dict] | None = None
 
     # ──────────────────────────────────────────────
     #  RESOLUTION HELPERS
@@ -289,6 +293,54 @@ class RedmineConnector(TicketProtocol):
                 seen[str(s.get("id"))] = {"id": s.get("id"), "name": s.get("name", "")}
         self._statuses = list(seen.values())
         return self._statuses
+
+    async def _get_priorities(self) -> list[dict]:
+        """Return the list of priorities, discovering them from existing issues.
+
+        Most Redmine versions do not expose a ``priorities.json`` endpoint,
+        and the numeric IDs are not portable across instances (each
+        installation configures its own set). We therefore discover the
+        available priorities from a sample of existing issues.
+        """
+        if self._priorities is not None:
+            return self._priorities
+        project = await self._resolve_project()
+        data = await self.client.get(
+            "issues.json",
+            params={"project_id": project.get("id"), "limit": 100},
+        )
+        seen: dict[str, dict] = {}
+        for issue in data.get("issues", []):
+            p = issue.get("priority") or {}
+            if p.get("id") is not None:
+                seen[str(p.get("id"))] = {"id": p.get("id"), "name": p.get("name", "")}
+        self._priorities = list(seen.values())
+        return self._priorities
+
+    async def _resolve_priority(self, priority: int) -> int | None:
+        """Map the protocol's 1-4 priority scale to an instance priority ID.
+
+        The mapping is by name (Urgent/High/Normal/Low), not by numeric ID,
+        because priority IDs are per-instance. Returns None when no priority
+        on this instance matches the requested level.
+        """
+        if priority <= 0:
+            return None
+        wanted = {1: "urgent", 2: "high", 3: "normal", 4: "low"}.get(priority, "")
+        if not wanted:
+            return None
+        synonyms = {
+            "urgent": ["urgent", "urgente", "immediat", "immediat*"],
+            "high": ["high", "alta", "elevat"],
+            "normal": ["normal", "normale", "media", "medio"],
+            "low": ["low", "bassa", "basso"],
+        }[wanted]
+        for p in await self._get_priorities():
+            name = p.get("name", "").lower()
+            for syn in synonyms:
+                if syn.rstrip("*") in name:
+                    return p.get("id")
+        return None
 
     async def _resolve_issue_type(self, ticket_type: str) -> int | None:
         """Resolve an issue type (or tracker on old Redmine) by name (case-insensitive)."""
@@ -687,7 +739,12 @@ class RedmineConnector(TicketProtocol):
                     )
                 issue["assigned_to_id"] = assignee_id
             if priority > 0:
-                issue["priority_id"] = PRIORITY_TO_ID.get(priority)
+                priority_id = await self._resolve_priority(priority)
+                if priority_id is None:
+                    return json.dumps(
+                        {"error": f"priority {priority} not found on this Redmine instance."}
+                    )
+                issue["priority_id"] = priority_id
             if iteration_path:
                 versions = await self._get_project_versions()
                 version = next((v for v in versions if v.get("name") == iteration_path), None)
@@ -769,7 +826,12 @@ class RedmineConnector(TicketProtocol):
                 )
             issue["status_id"] = status.get("id")
         if priority > 0:
-            issue["priority_id"] = PRIORITY_TO_ID.get(priority)
+            priority_id = await self._resolve_priority(priority)
+            if priority_id is None:
+                return json.dumps(
+                    {"error": f"priority {priority} not found on this Redmine instance."}
+                )
+            issue["priority_id"] = priority_id
         if iteration_path:
             versions = await self._get_project_versions()
             version = next((v for v in versions if v.get("name") == iteration_path), None)

@@ -61,6 +61,15 @@ REDMINE_STATUSES = {
 REDMINE_USERS = {"users": [{"id": 7, "login": "mario", "name": "Mario Rossi"}]}
 REDMINE_VERSIONS = {"versions": [{"id": 9, "name": "v1.2"}, {"id": 10, "name": "v2.0"}]}
 REDMINE_ACCOUNT = {"user": {"id": 7, "login": "mario", "name": "Mario Rossi"}}
+# Priorities on the 1-4 scale, so the protocol scale maps 1:1 to ids.
+REDMINE_PRIORITIES = {
+    "issues": [
+        {"id": 1, "priority": {"id": 1, "name": "Urgent"}},
+        {"id": 2, "priority": {"id": 2, "name": "High"}},
+        {"id": 3, "priority": {"id": 3, "name": "Normal"}},
+        {"id": 4, "priority": {"id": 4, "name": "Low"}},
+    ]
+}
 
 BASE_KEYS = {
     "id",
@@ -328,6 +337,7 @@ async def test_create_ticket_payload():
             "issue_types.json": REDMINE_TYPES,
             "users.json": REDMINE_USERS,
             "projects/3/versions.json": REDMINE_VERSIONS,
+            "issues.json": REDMINE_PRIORITIES,
         },
         post={"issue": {"id": 500, "issue_type": {"name": "Bug"}}},
     )
@@ -404,7 +414,14 @@ async def test_update_ticket_no_fields():
 
 @pytest.mark.asyncio
 async def test_update_ticket_state_and_priority():
-    connector = _connector({"issues_statuses.json": REDMINE_STATUSES}, put={"issue": {"id": 1}})
+    connector = _connector(
+        {
+            "projects.json": REDMINE_PROJECTS,
+            "issues_statuses.json": REDMINE_STATUSES,
+            "issues.json": REDMINE_PRIORITIES,
+        },
+        put={"issue": {"id": 1}},
+    )
     parsed = _load(await connector.update_ticket(ticket_id=1, state="closed", priority=1))
     assert parsed["success"] is True
     payload = connector.client.put.call_args.kwargs["data"]
