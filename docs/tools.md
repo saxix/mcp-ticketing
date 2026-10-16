@@ -1,6 +1,6 @@
 # Tools Reference
 
-Both Azure DevOps and GitHub backends expose the same 15 tools with identical function names and parameter signatures. Minor behavioral differences are backend-specific — see [Azure DevOps](azure.md) and [GitHub](github.md) for details.
+All backends (Azure DevOps, GitHub, Redmine) expose the same 15 tools with identical function names and parameter signatures. Minor behavioral differences are backend-specific — see [Azure DevOps](azure.md), [GitHub](github.md) and [Redmine](redmine.md) for details.
 
 ---
 
@@ -36,7 +36,7 @@ Retrieve full details of a ticket.
 
 **Returns:** JSON with `id`, `title`, `type`, `state`, `assigned_to`, `tags`, `area_path`, `iteration_path`, `priority`, `created_date`, `changed_date`, `description`.
 
-`description` holds the ticket body: `System.Description` as HTML on Azure DevOps, the issue `body` as Markdown on GitHub. It is returned by `get_ticket` only — `search_tickets` omits it to keep list responses light.
+`description` holds the ticket body: `System.Description` as HTML on Azure DevOps, the issue `body` as Markdown on GitHub, the issue `description` as HTML on Redmine. It is returned by `get_ticket` only — `search_tickets` omits it to keep list responses light.
 
 ---
 
@@ -99,6 +99,7 @@ Add a Mermaid diagram to a ticket.
 
 - **GitHub**: the Mermaid source is appended at the bottom of the issue body, under the `## Diagrams` heading (rendered automatically by GitHub). The `section` parameter controls the heading.
 - **Azure**: the diagram is rendered locally to a high-resolution PNG (2x zoom-friendly, via the bundled `mermaidx` engine), attached to the work item as an `AttachedFile` relation **and** embedded at the bottom of the description with an `<img>` tag so it is visible directly in the ticket. `section` is ignored.
+- **Redmine**: same approach as Azure — the diagram is rendered locally to a PNG, attached to the issue via the `attachments` endpoint and embedded in the description with an `<img>` tag (Redmine renders HTML descriptions but not Mermaid). `section` is ignored.
 
 **Parameters:**
 
@@ -141,7 +142,7 @@ On GitHub, if a `## Diagrams` section already exists, only the new diagram block
 
 ## `add_ticket_image`
 
-Attach a local image file to a ticket. **Azure only** — GitHub Issues have no native attachment API and this tool returns `{"error": "add_ticket_image is not supported by this backend."}` on GitHub.
+Attach a local image file to a ticket. **Azure and Redmine** — GitHub Issues have no native attachment API and this tool returns `{"error": "add_ticket_image is not supported by this backend."}` on GitHub.
 
 **Parameters:**
 
@@ -185,11 +186,11 @@ Create a new ticket.
 | `ticket_type` | str | Yes | `""` | Ticket type (Task, Bug, etc.) |
 | `title` | str | Yes | `""` | Ticket title |
 | `description` | str | No | `""` | Description (HTML for Azure, Markdown for GitHub) |
-| `assigned_to` | str | No | `""` | Assignee (display name Azure, username GitHub) |
+| `assigned_to` | str | No | `""` | Assignee (display name Azure, username GitHub, login/name Redmine) |
 | `priority` | int | No | `0` | Priority (1-4) |
-| `tags` | str | No | `""` | Semicolon-separated tags |
-| `area_path` | str | No | `""` | Area path (Azure) or labels (GitHub) |
-| `iteration_path` | str | No | `""` | Iteration (Azure) or milestone title (GitHub) |
+| `tags` | str | No | `""` | Semicolon-separated tags (ignored on Redmine) |
+| `area_path` | str | No | `""` | Area path (Azure) or labels (GitHub); ignored on Redmine |
+| `iteration_path` | str | No | `""` | Iteration (Azure), milestone title (GitHub) or version name (Redmine) |
 
 !!! note
 
@@ -251,10 +252,10 @@ Search tickets using a query or built-in filters.
 | `query` | str | No | `""` | Custom WIQL query (Azure) or search query (GitHub) |
 | `ticket_type` | str | No | `""` | Filter by type |
 | `state` | str | No | `""` | Filter by state |
-| `assigned_to` | str | No | `""` | Filter by assignee |
-| `tags` | str | No | `""` | Filter by tags |
-| `area_path` | str | No | `""` | Filter by area path |
-| `iteration_path` | str | No | `""` | Filter by iteration |
+| `assigned_to` | str | No | `""` | Filter by assignee (login/name on Redmine) |
+| `tags` | str | No | `""` | Filter by tags (ignored on Redmine) |
+| `area_path` | str | No | `""` | Filter by area path (ignored on Redmine) |
+| `iteration_path` | str | No | `""` | Filter by iteration or version name (Redmine) |
 | `max_results` | int | No | `20` | Max results (1-200) |
 
 !!! tip
@@ -298,7 +299,7 @@ Find active tickets assigned to you where the last comment was not written by yo
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `my_display_name` | str | Yes | Your display name (Azure) or username (GitHub) |
+| `my_display_name` | str | Yes | Your display name (Azure), username (GitHub) or login/name (Redmine) |
 
 **Returns:**
 
@@ -337,6 +338,7 @@ Link two tickets together.
 
 - Azure: `System.LinkTypes.Hierarchy-Reverse` (parent)
 - GitHub: `related` (cross-reference comment)
+- Redmine: `related` (`relates to`); also supports `blocks`, `is blocked by`, `duplicates`, `is duplicated by`, `copied from`, `copied to`
 
 **Returns:**
 

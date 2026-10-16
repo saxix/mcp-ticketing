@@ -39,6 +39,14 @@ Edit `.env` with your credentials. You can configure one or more backends:
     MCP_GITHUB_TOKEN=your-github-personal-access-token
     ```
 
+=== "Redmine"
+
+    ```bash
+    MCP_REDMINE_URL=https://your-redmine-instance.example.com
+    MCP_REDMINE_PROJECT=your-project-identifier
+    MCP_REDMINE_API_KEY=your-redmine-api-key
+    ```
+
 See [Configuration](configuration.md) for all environment variables.
 
 ## Running the Server
@@ -46,6 +54,7 @@ See [Configuration](configuration.md) for all environment variables.
 ```bash
 uv run mcp-ticketing azure    # Azure DevOps
 uv run mcp-ticketing github   # GitHub
+uv run mcp-ticketing redmine  # Redmine
 ```
 
 Or run directly:
@@ -53,6 +62,7 @@ Or run directly:
 ```bash
 uv run python -m mcp_ticketing.main azure    # Azure DevOps (default)
 uv run python -m mcp_ticketing.main github   # GitHub
+uv run python -m mcp_ticketing.main redmine  # Redmine
 ```
 
 ## Verifying the Connection
@@ -64,6 +74,7 @@ Alternatively, verify the credentials from the command line without starting the
 ```bash
 uv run mcp-ticketing azure --check   # Prints {"status": "ok", ...} and exits
 uv run mcp-ticketing github --check
+uv run mcp-ticketing redmine --check
 ```
 
 Exit code is `0` on success, `1` on failure.
@@ -75,6 +86,11 @@ uv run mcp-ticketing github --check \
   --owner your-github-username-or-org \
   --repo your-repository-name \
   --token your-github-personal-access-token
+
+uv run mcp-ticketing redmine --check \
+  --owner https://redmine.example.com \
+  --repo your-project-identifier \
+  --token your-redmine-api-key
 ```
 
 See [Configuration](configuration.md) for the full flag-to-environment mapping.

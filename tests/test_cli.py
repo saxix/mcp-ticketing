@@ -78,6 +78,18 @@ def test_cli_flags_override_existing_env(monkeypatch):
     assert os.getenv("MCP_GITHUB_OWNER") == "new-owner"
 
 
+def test_redmine_flags_set_env(monkeypatch):
+    for var in CLI_ENV_MAP["redmine"].values():
+        monkeypatch.delenv(var, raising=False)
+
+    args = _parse("redmine", "--owner", "https://redmine.example.com", "--repo", "myproject", "--token", "key-abc")
+    _apply_cli_env(args)
+
+    assert os.getenv("MCP_REDMINE_URL") == "https://redmine.example.com"
+    assert os.getenv("MCP_REDMINE_PROJECT") == "myproject"
+    assert os.getenv("MCP_REDMINE_API_KEY") == "key-abc"
+
+
 def test_empty_flags_do_not_touch_env(monkeypatch):
     for var in CLI_ENV_MAP["azure"].values():
         monkeypatch.delenv(var, raising=False)

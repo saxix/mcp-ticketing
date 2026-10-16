@@ -41,6 +41,11 @@ Add mcp-ticketing to your `opencode.json` (`~/.config/opencode/opencode.jsonc` o
       "type": "local",
       "command": ["uv", "run", "--project", "/path/to/mcp-ticketing", "mcp-ticketing", "github"],
       "enabled": true
+    },
+    "redmine": {
+      "type": "local",
+      "command": ["uv", "run", "--project", "/path/to/mcp-ticketing", "mcp-ticketing", "redmine"],
+      "enabled": true
     }
   }
 }
@@ -87,6 +92,16 @@ Credentials can be injected without a `.env` file using per-server `environment`
         "MCP_GITHUB_OWNER": "your-org-or-user",
         "MCP_GITHUB_REPO": "your-repo",
         "MCP_GITHUB_TOKEN": "{env:MCP_GITHUB_TOKEN}"
+      }
+    },
+    "redmine": {
+      "type": "local",
+      "command": ["uvx", "mcp-ticketing", "redmine"],
+      "enabled": true,
+      "environment": {
+        "MCP_REDMINE_URL": "https://redmine.example.com",
+        "MCP_REDMINE_PROJECT": "your-project",
+        "MCP_REDMINE_API_KEY": "{env:MCP_REDMINE_API_KEY}"
       }
     }
   }

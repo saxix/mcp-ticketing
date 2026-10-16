@@ -1,6 +1,6 @@
 # mcp-ticketing
 
-MCP server for managing tickets on **Azure DevOps** and **GitHub Issues**.
+MCP server for managing tickets on **Azure DevOps**, **GitHub Issues** and **Redmine**.
 
 All backends expose the same 15 tools with identical function names, so you can switch providers without changing your workflow.
 
@@ -56,11 +56,22 @@ To create a PAT:
 | `MCP_GITHUB_REPO` | Repository name |
 | `MCP_GITHUB_TOKEN` | Personal Access Token (scope: **repo**) |
 
+#### Redmine
+
+| Variable | Description |
+|----------|-------------|
+| `MCP_REDMINE_URL` | Redmine instance base URL |
+| `MCP_REDMINE_PROJECT` | Project identifier or ID (default scope) |
+| `MCP_REDMINE_API_KEY` | API key from your profile page |
+
+To create an API key: log in to Redmine, open **My account** and copy the **API key** shown at the top of the page.
+
 ### 3. Run
 
 ```bash
 uv run mcp-ticketing azure    # Azure DevOps
 uv run mcp-ticketing github   # GitHub
+uv run mcp-ticketing redmine  # Redmine
 ```
 
 ### 4. Verify credentials (optional)
@@ -68,31 +79,32 @@ uv run mcp-ticketing github   # GitHub
 ```bash
 uv run mcp-ticketing azure --check   # Prints {"status": "ok", ...} and exits
 uv run mcp-ticketing github --check
+uv run mcp-ticketing redmine --check
 ```
 
 Exit code is `0` on success, `1` on failure.
 
 ## Available Tools
 
-Both backends expose the same 15 tools:
+All backends expose the same 15 tools:
 
 | Tool | Description |
 |------|-------------|
-| `get_ticket_types` | List valid ticket types (Task, Bug, etc.) |
+| `get_ticket_types` | List valid ticket types (work item types, Issue, issue types) |
 | `get_ticket` | Retrieve full ticket details |
 | `get_ticket_comments` | Retrieve all comments on a ticket |
 | `add_comment` | Add a comment to a ticket |
-| `add_mermaid` | Add a Mermaid diagram (Markdown source on GitHub; high-res PNG embedded on Azure) |
-| `add_ticket_image` | Attach a local image file (Azure only; not supported on GitHub) |
+| `add_mermaid` | Add a Mermaid diagram (Markdown source on GitHub; high-res PNG embedded on Azure and Redmine) |
+| `add_ticket_image` | Attach a local image file (Azure and Redmine; not supported on GitHub) |
 | `create_ticket` | Create a new ticket |
 | `update_ticket` | Update an existing ticket (partial update) |
 | `search_tickets` | Search tickets with query or filters |
 | `get_tickets_needing_my_reply` | Active tickets where you need to reply |
 | `link_tickets` | Link two tickets together |
 | `get_ticket_relations` | Retrieve links and cross-references |
-| `get_iterations` | List iterations/sprints (Azure) or milestones (GitHub) |
-| `move_to_iteration` | Move a ticket to an iteration or milestone |
-| `get_area_paths` | Retrieve area paths (Azure) or labels (GitHub) |
+| `get_iterations` | List iterations/sprints (Azure), milestones (GitHub) or versions (Redmine) |
+| `move_to_iteration` | Move a ticket to an iteration, milestone or version |
+| `get_area_paths` | Retrieve area paths (Azure), labels (GitHub) or issue trackers (Redmine) |
 
 ## Usage with opencode
 
@@ -255,7 +267,7 @@ Response:
 
 ### Add a diagram (Mermaid)
 
-Use Mermaid syntax whenever a diagram is requested. On GitHub the diagram source is appended at the bottom of the issue body (rendered automatically by GitHub); on Azure the diagram is rendered locally to a high-resolution PNG — via the bundled `mermaidx` engine (Mermaid v11, no browser or Node needed, works offline) — and embedded at the bottom of the work item description (also listed in Attachments). The rendered PNG uses a 2x scale so it stays crisp when zoomed.
+Use Mermaid syntax whenever a diagram is requested. On GitHub the diagram source is appended at the bottom of the issue body (rendered automatically by GitHub); on Azure and Redmine the diagram is rendered locally to a high-resolution PNG — via the bundled `mermaidx` engine (Mermaid v11, no browser or Node needed, works offline) — and embedded at the bottom of the description (also attached to the ticket). The rendered PNG uses a 2x scale so it stays crisp when zoomed.
 
 ```
 user: Generate a flowchart for the login flow and append it to ticket #1234
@@ -289,7 +301,7 @@ Response (GitHub):
 
 ### Attach an image
 
-Azure only — GitHub Issues have no native attachment API and return `{"error": "add_ticket_image is not supported by this backend."}`.
+Azure and Redmine — GitHub Issues have no native attachment API and return `{"error": "add_ticket_image is not supported by this backend."}`.
 
 ```
 user: Attach /tmp/screenshot.png to ticket #1234 with note "login screen"
