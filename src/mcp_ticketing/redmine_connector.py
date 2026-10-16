@@ -151,8 +151,37 @@ def format_ticket(issue: dict, include_description: bool = False) -> str:
     return json.dumps(ticket, indent=2, ensure_ascii=False)
 
 
-def _strip_html(text: str) -> str:
-    """Reduce an HTML snippet to plain text (best effort, no external deps)."""
+def _strip_wiki(text: str) -> str:
+    """Normalise Redmine wiki markup and HTML into readable plain text.
+
+    Redmine journal notes are stored as wiki markup (``h1.``-``h6.``
+    headings, ``* ``/``** `` bullets, ``# ``/``## `` ordered lists,
+    ``| `` tables, ``*text*``/``**text**`` emphasis, ``{{code}}`` blocks)
+    and may also contain HTML. Both are reduced to plain text so the
+    comments render correctly in a terminal TUI.
+    """
+    # Wiki tables (| a | b |) -> tab-separated, one row per line.
+    def _table_repl(match: re.Match) -> str:
+        cells = match.group(0)
+        cells = re.sub(r"^\|", "", cells)
+        cells = re.sub(r"\|$", "", cells)
+        return "\t".join(c.strip() for c in cells.split("|"))
+
+    text = re.sub(r"^\|.*$", _table_repl, text, flags=re.MULTILINE)
+    # Wiki headings (h1. Title) -> plain line.
+    text = re.sub(r"^h([1-6])\.\s*", "", text, flags=re.MULTILINE)
+    # Wiki list bullets (* item) and ordered items (# item).
+    text = re.sub(r"^(?:\*{1,2}|#{1,2})\s+", "", text, flags=re.MULTILINE)
+    # Emphasis and formatting markers.
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", text)
+    text = re.sub(r"__(.+?)__", r"\1", text)
+    text = re.sub(r"_{2,}(.+?)_{2,}", r"\1", text)
+    # Single-underscore italic (_text_) only at word boundaries, so that
+    # identifiers like STATO_DISTINTA are left untouched.
+    text = re.sub(r"(?<![\w_])_([^_]+)_(?![\w_])", r"\1", text)
+    text = re.sub(r"{{(.+?)}}", r"\1", text, flags=re.DOTALL)
+    # HTML tags.
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</p>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", "", text)
@@ -437,9 +466,15 @@ class RedmineConnector(TicketProtocol):
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_ticket_comments(self, ticket_id: int) -> str:
-        """Retrieve all comments (Redmine journal notes) associated with a ticket."""
+        """Retrieve all comments (Redmine journal notes) associated with a ticket.
+
+        Journals are not returned by default; the ``include=journals`` flag
+        is required or Redmine omits the ``journals`` key entirely.
+        """
         try:
-            data = await self.client.get(f"issues/{ticket_id}.json")
+            data = await self.client.get(
+                f"issues/{ticket_id}.json", params={"include": ["journals"]}
+            )
             journals = (data.get("issue", {}).get("journals", []) or [])
             result = []
             for j in journals:
@@ -451,7 +486,7 @@ class RedmineConnector(TicketProtocol):
                         "id": j.get("id"),
                         "author": (j.get("user", {}) or {}).get("name", "Unknown"),
                         "created_date": j.get("created_on", ""),
-                        "text": _strip_html(note),
+                        "text": _strip_wiki(note),
                     }
                 )
             if not result:
@@ -876,7 +911,7 @@ class RedmineConnector(TicketProtocol):
                 for j in reversed(journals):
                     note = (j.get("notes") or "").strip()
                     if note:
-                        last_note = _strip_html(note)
+                        last_note = _strip_wiki(note)
                         last_author = (j.get("user", {}) or {}).get("name", "")
                         last_date = j.get("created_on", "")
                         break
