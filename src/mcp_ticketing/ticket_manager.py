@@ -9,10 +9,12 @@ without knowing which backend serves the tickets.
 from mcp_ticketing.azure_connector import AzureConnector
 from mcp_ticketing.github_connector import GithubConnector
 from mcp_ticketing.protocol import TicketProtocol
+from mcp_ticketing.redmine_connector import RedmineConnector
 
 BACKENDS: dict[str, type[TicketProtocol]] = {
     "azure": AzureConnector,
     "github": GithubConnector,
+    "redmine": RedmineConnector,
 }
 
 
@@ -21,8 +23,8 @@ class TicketManager(TicketProtocol):
 
     The strategy is injected at construction time (dependency injection),
         so the manager is backend-agnostic. It accepts either a concrete
-        TicketProtocol instance or a backend name (e.g. 'azure', 'github')
-        that is resolved through the BACKENDS registry.
+        TicketProtocol instance or a backend name (e.g. 'azure', 'github',
+        'redmine') that is resolved through the BACKENDS registry.
     """
 
     def __init__(self, strategy: str | TicketProtocol):

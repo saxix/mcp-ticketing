@@ -1,5 +1,5 @@
 site_name: mcp-ticketing
-site_description: MCP server for managing tickets on Azure DevOps and GitHub Issues
+site_description: MCP server for managing tickets on Azure DevOps, GitHub Issues and Redmine
 site_url: ""
 
 repo_url: https://github.com/saxix/mcp-ticketing
@@ -29,6 +29,7 @@ nav:
   - Backends:
       - Azure DevOps: azure.md
       - GitHub: github.md
+      - Redmine: redmine.md
   - Tools Reference: tools.md
   - Integration:
       - opencode: opencode.md
