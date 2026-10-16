@@ -475,7 +475,7 @@ async def test_search_tickets_builds_filters():
     (call,) = [c for c in connector.client.get.call_args_list if c.args and c.args[0] == "issues.json"]
     params = call.kwargs["params"]
     assert params["project_id"] == 3
-    assert params["query"] == "payee"
+    assert params["subject"] == "~payee"  # query -> subject wildcard (portable)
     assert params["tracker_id"] == 2
     assert params["status_id"] == 1
     assert params["assigned_to_id"] == 7
