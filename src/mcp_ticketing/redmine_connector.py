@@ -300,20 +300,32 @@ class RedmineConnector(TicketProtocol):
         Most Redmine versions do not expose a ``priorities.json`` endpoint,
         and the numeric IDs are not portable across instances (each
         installation configures its own set). We therefore discover the
-        available priorities from a sample of existing issues.
+        available priorities from a global sample of issues (not scoped to
+        the project, so that priorities unused in the project are still
+        found).
         """
         if self._priorities is not None:
             return self._priorities
-        project = await self._resolve_project()
-        data = await self.client.get(
-            "issues.json",
-            params={"project_id": project.get("id"), "limit": 100},
-        )
+        # Discover priorities globally (not per-project) by paginating
+        # through issues, so that all configured priorities are found even
+        # if the current project has no issues with a particular level.
+        # Redmine caps each request at 100 issues, so we page through.
         seen: dict[str, dict] = {}
-        for issue in data.get("issues", []):
-            p = issue.get("priority") or {}
-            if p.get("id") is not None:
-                seen[str(p.get("id"))] = {"id": p.get("id"), "name": p.get("name", "")}
+        page_size = 100
+        for page in range(10):  # up to 1000 issues
+            data = await self.client.get(
+                "issues.json",
+                params={"limit": page_size, "offset": page * page_size},
+            )
+            issues = data.get("issues", [])
+            if not issues:
+                break
+            for issue in issues:
+                p = issue.get("priority") or {}
+                if p.get("id") is not None:
+                    seen[str(p.get("id"))] = {"id": p.get("id"), "name": p.get("name", "")}
+            if len(issues) < page_size:
+                break
         self._priorities = list(seen.values())
         return self._priorities
 
@@ -884,8 +896,12 @@ class RedmineConnector(TicketProtocol):
         """Search tickets in Redmine using built-in filters.
 
         Args:
-            query: Free-text search on subject and description. When provided,
-                it is combined with the other filters (AND).
+            query: Free-text search on the ticket subject. When provided,
+                it is combined with the other filters (AND). Note: older
+                Redmine versions do not support the ``query`` REST parameter
+                (it returns HTTP 500), so the search is applied to the
+                subject field with a wildcard, which is the closest
+                portable equivalent.
             ticket_type: Issue type name (new Redmine) or tracker name (old Redmine)
             state: Redmine status name or generic word (open/active/closed)
             assigned_to: Assignee login or name
@@ -929,7 +945,10 @@ class RedmineConnector(TicketProtocol):
             if version:
                 params["version_id"] = version.get("id")
         if query:
-            params["query"] = query
+            # The 'query' REST parameter is not supported by older Redmine
+            # versions (it returns HTTP 500). Use the subject field with a
+            # wildcard instead, which is portable across all versions.
+            params["subject"] = f"~{query}"
 
         try:
             data = await self.client.get("issues.json", params=params)
