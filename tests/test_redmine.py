@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from mcp_ticketing.redmine_connector import RedmineConnector
+from mcp_ticketing.redmine_connector import RedmineConnector, _strip_wiki
 from mcp_ticketing.redmine_connector import format_ticket as redmine_format_ticket
 
 REDMINE_ISSUE = {
@@ -180,6 +180,48 @@ def test_redmine_format_ticket_unassigned_defaults():
 
 
 # ──────────────────────────────────────────────
+#  _strip_wiki — wiki markup to plain text
+# ──────────────────────────────────────────────
+
+
+def test_strip_wiki_plain_text_unchanged():
+    """Plain text without wiki markers must pass through (stripped)."""
+    assert _strip_wiki("First note") == "First note"
+    assert _strip_wiki("  spaced  ") == "spaced"
+
+
+def test_strip_wiki_headings():
+    assert _strip_wiki("h1. Title\nh2. Sub") == "Title\nSub"
+
+
+def test_strip_wiki_emphasis():
+    assert _strip_wiki("**bold** and *italic*") == "bold and italic"
+    assert _strip_wiki("__bold__ and _italic_") == "bold and italic"
+
+
+def test_strip_wiki_lists():
+    assert _strip_wiki("* a\n* b\n# 1\n# 2") == "a\nb\n1\n2"
+
+
+def test_strip_wiki_table():
+    assert _strip_wiki("| a | b |\n| 1 | 2 |") == "a\tb\n1\t2"
+
+
+def test_strip_wiki_html():
+    assert _strip_wiki("<p>Hello <b>world</b></p>") == "Hello world"
+    assert _strip_wiki("a<br>b<br/>c") == "a\nb\nc"
+
+
+def test_strip_wiki_code_block():
+    assert _strip_wiki("{{ code }}") == "code"
+
+
+def test_strip_wiki_preserves_ident_underscores():
+    """Identifiers with internal underscores must not be treated as italic."""
+    assert _strip_wiki("STATO_DISTINTA e TIPO_DISTINTA") == "STATO_DISTINTA e TIPO_DISTINTA"
+
+
+# ──────────────────────────────────────────────
 #  get_ticket / comments
 # ──────────────────────────────────────────────
 
@@ -214,6 +256,15 @@ async def test_get_ticket_comments_only_notes():
     assert parsed["ticket_id"] == 4242
     assert parsed["total"] == 2
     assert [c["text"] for c in parsed["comments"]] == ["First note", "Second note"]
+
+
+@pytest.mark.asyncio
+async def test_get_ticket_comments_sends_include_journals():
+    """The request must pass include=journals, else Redmine omits the journals."""
+    connector = _connector({"issues/4242.json": {"issue": REDMINE_ISSUE}})
+    await connector.get_ticket_comments(4242)
+    (call,) = [c for c in connector.client.get.call_args_list if c.args and c.args[0].startswith("issues/")]
+    assert call.kwargs["params"] == {"include": ["journals"]}
 
 
 # ──────────────────────────────────────────────
