@@ -1,10 +1,16 @@
 """Redmine connector implementing TicketProtocol.
 
-Supports all Redmine versions (1.x through 5.x). On older versions where
-``issue_types.json``, ``issues_statuses.json``, ``priorities.json``,
-``my_account.json`` and global ``versions.json`` are unavailable, the
-connector falls back to ``trackers.json``, discovery from existing issues,
-and per-project ``versions.json`` respectively.
+Supports Redmine 4.2 through 7.x. The version-specific parts (issue-type
+endpoint and field names) are delegated to a
+:class:`~mcp_ticketing.redmine.profile.RedmineVersionProfile` selected **once
+at startup** — either from the declared ``MCP_REDMINE_VERSION`` or from a
+single probe that reads the ``X-Redmine-Version`` response header. There are
+no runtime try/except-404 attempts: the profile decides the endpoint, and a
+declared-vs-server mismatch fails fast at startup.
+
+Configuration comes from the environment: ``MCP_REDMINE_URL``,
+``MCP_REDMINE_API_KEY``, ``MCP_REDMINE_PROJECT`` and the optional
+``MCP_REDMINE_VERSION`` / ``MCP_REDMINE_VERIFY_SSL``.
 """
 
 import asyncio
@@ -12,111 +18,35 @@ import html
 import json
 import logging
 import os
-import re
-from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from dotenv import load_dotenv
 
 from mcp_ticketing._images import is_image_file, read_image_file
 from mcp_ticketing.protocol import TicketProtocol
-
-load_dotenv()
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("mcp-ticketing-redmine")
-
-REDMINE_URL = os.getenv("MCP_REDMINE_URL", "")
-REDMINE_API_KEY = os.getenv("MCP_REDMINE_API_KEY", "")
-REDMINE_PROJECT = os.getenv("MCP_REDMINE_PROJECT", "")
-# "false" or "0" disables TLS verification; a path points to a CA bundle; empty keeps default.
-REDMINE_VERIFY_SSL = os.getenv("MCP_REDMINE_VERIFY_SSL", "")
-
-# The protocol's 1-4 priority scale (Urgent, High, Normal, Low) is mapped to
-# instance priority IDs by name, not by numeric ID, because priority IDs are
-# per-instance. See ``RedmineConnector._resolve_priority``.
-
-# Generic state words accepted by update_ticket / search_tickets, mapped to
-# Redmine status names to try (the first match wins). Includes both English
-# and Italian (the most common localization) variants.
-STATE_TO_STATUSES = {
-    "open": ["New", "In progress", "Reopened", "Nuova", "In lavorazione", "Riaperta", "Aperta"],
-    "active": ["In progress", "New", "Reopened", "In lavorazione", "Nuova", "Aperta"],
-    "closed": ["Closed", "Done", "Resolved", "Chiusa", "Completata", "Risolta"],
-    "resolved": ["Resolved", "Closed", "Done", "Risolta", "Chiusa", "Completata"],
-    "done": ["Done", "Closed", "Completata", "Chiusa"],
-    "new": ["New", "Nuova"],
-    "reopened": ["Reopened", "Riaperta"],
-}
-
-OPEN_STATES = (
-    "open", "active", "new", "reopened", "in progress",
-    "nuova", "in lavorazione", "riaperta", "aperta",
+from mcp_ticketing.redmine.base import (
+    OPEN_STATES,
+    STATE_TO_STATUSES,
+    first_field,
+    markdown_to_html,
+    render_mermaid_png,
+    strip_wiki,
+)
+from mcp_ticketing.redmine.client import RedmineClient
+from mcp_ticketing.redmine.discovery import discover_priorities, resolve_priority_id
+from mcp_ticketing.redmine.profile import (
+    ProfileMismatchError,
+    RedmineCapabilities,
+    RedmineVersionProfile,
+    UnsupportedRedmineVersionError,
+    is_supported,
+    parse_version,
 )
 
+# RedmineCapabilities is used as the return type of _probe_version.
+from mcp_ticketing.redmine.registry import VERSION_PROFILES, select_profile
 
-class RedmineClient:
-    """Thin httpx wrapper for the Redmine JSON REST API."""
-
-    def __init__(self):
-        self.base_url = REDMINE_URL.rstrip("/")
-        self.api_key = REDMINE_API_KEY
-        self.project = REDMINE_PROJECT
-        self.verify = self._resolve_verify()
-
-    @staticmethod
-    def _resolve_verify() -> bool | str:
-        """Resolve the ``verify`` argument for httpx from ``MCP_REDMINE_VERIFY_SSL``.
-
-        - empty / unset  -> ``True`` (use the default CA bundle)
-        - ``false`` / ``0`` -> ``False`` (disable TLS verification)
-        - anything else  -> the value is treated as a path to a CA bundle file
-        """
-        value = REDMINE_VERIFY_SSL.strip()
-        if not value:
-            return True
-        if value.lower() in ("false", "0", "no", "off"):
-            return False
-        return value
-
-    @asynccontextmanager
-    async def get_client(self):
-        async with httpx.AsyncClient(timeout=30.0, verify=self.verify) as client:
-            yield client
-
-    def _headers(self) -> dict[str, str]:
-        return {
-            "X-Redmine-API-Key": self.api_key,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-
-    async def get(self, path: str, params: dict | None = None) -> Any:
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        async with self.get_client() as client:
-            response = await client.get(url, headers=self._headers(), params=params or {})
-            response.raise_for_status()
-            return response.json()
-
-    async def post(self, path: str, data: Any, params: dict | None = None) -> Any:
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        async with self.get_client() as client:
-            response = await client.post(url, headers=self._headers(), json=data, params=params or {})
-            response.raise_for_status()
-            if response.status_code == 204 or not response.content:
-                return {}
-            return response.json()
-
-    async def put(self, path: str, data: Any, params: dict | None = None) -> Any:
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        async with self.get_client() as client:
-            response = await client.put(url, headers=self._headers(), json=data, params=params or {})
-            response.raise_for_status()
-            # Old Redmine returns 204 No Content (empty body) on success.
-            if response.status_code == 204 or not response.content:
-                return {}
-            return response.json()
+logger = logging.getLogger("mcp-ticketing-redmine")
 
 
 def format_ticket(issue: dict, include_description: bool = False) -> str:
@@ -126,16 +56,15 @@ def format_ticket(issue: dict, include_description: bool = False) -> str:
     is True, so that list endpoints (search_tickets) stay light while
     single-ticket reads (get_ticket) expose the body.
 
-    Handles both old Redmine (``tracker``, ``fixed_version``) and new Redmine
-    (``issue_type``, ``version``) field names.
+    Field names are read through :data:`~mcp_ticketing.redmine.base.FIELD_ALIASES`
+    so both old Redmine (``tracker`` / ``fixed_version``) and new Redmine
+    (``issue_type`` / ``version``) payloads are handled.
     """
     status = issue.get("status", {}) or {}
     assigned_to = issue.get("assigned_to", {}) or {}
     priority = issue.get("priority", {}) or {}
-    # New Redmine uses "issue_type"; old Redmine uses "tracker".
-    issue_type = issue.get("issue_type") or issue.get("tracker") or {}
-    # New Redmine uses "version"; old Redmine uses "fixed_version".
-    version = issue.get("version") or issue.get("fixed_version") or {}
+    issue_type = first_field(issue, "issue_type")
+    version = first_field(issue, "version")
     ticket = {
         "id": issue.get("id"),
         "title": issue.get("subject", ""),
@@ -154,95 +83,63 @@ def format_ticket(issue: dict, include_description: bool = False) -> str:
     return json.dumps(ticket, indent=2, ensure_ascii=False)
 
 
-def _strip_wiki(text: str) -> str:
-    """Normalise Redmine wiki markup and HTML into readable plain text.
-
-    Redmine journal notes are stored as wiki markup (``h1.``-``h6.``
-    headings, ``* ``/``** `` bullets, ``# ``/``## `` ordered lists,
-    ``| `` tables, ``*text*``/``**text**`` emphasis, ``{{code}}`` blocks)
-    and may also contain HTML. Both are reduced to plain text so the
-    comments render correctly in a terminal TUI.
-    """
-    # Wiki tables (| a | b |) -> tab-separated, one row per line.
-    def _table_repl(match: re.Match) -> str:
-        cells = match.group(0)
-        cells = re.sub(r"^\|", "", cells)
-        cells = re.sub(r"\|$", "", cells)
-        return "\t".join(c.strip() for c in cells.split("|"))
-
-    text = re.sub(r"^\|.*$", _table_repl, text, flags=re.MULTILINE)
-    # Wiki headings (h1. Title) -> plain line.
-    text = re.sub(r"^h([1-6])\.\s*", "", text, flags=re.MULTILINE)
-    # Wiki list bullets (* item) and ordered items (# item).
-    text = re.sub(r"^(?:\*{1,2}|#{1,2})\s+", "", text, flags=re.MULTILINE)
-    # Emphasis and formatting markers.
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", text)
-    text = re.sub(r"__(.+?)__", r"\1", text)
-    text = re.sub(r"_{2,}(.+?)_{2,}", r"\1", text)
-    # Single-underscore italic (_text_) only at word boundaries, so that
-    # identifiers like STATO_DISTINTA are left untouched.
-    text = re.sub(r"(?<![\w_])_([^_]+)_(?![\w_])", r"\1", text)
-    text = re.sub(r"{{(.+?)}}", r"\1", text, flags=re.DOTALL)
-    # HTML tags.
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"</p>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", "", text)
-    return html.unescape(text).strip()
-
-
-def _markdown_to_html(text: str) -> str:
-    """Convert Markdown to HTML for Redmine's HTML description field.
-
-    Redmine stores the description as HTML. If the caller passes Markdown
-    (headings, **bold**, lists, tables, fenced code, etc.) we render it to
-    HTML so it displays correctly. Plain HTML is passed through unchanged
-    (same heuristic as the Azure connector).
-    """
-    if not text:
-        return text
-    markdown_markers = ("**", "__", "```", "## ", " - ", "- ", "* ", "1. ", "> ", "[", "](", " | ", "|")
-    looks_like_markdown = any(m in text for m in markdown_markers)
-    looks_like_html = text.strip().startswith("<") and ">" in text
-    if looks_like_html and not looks_like_markdown:
-        return text
-    try:
-        import markdown  # local import so missing dep doesn't break module import
-
-        return markdown.markdown(text, extensions=["extra", "tables", "fenced_code", "codehilite"])
-    except ImportError:
-        return text
-
-
-def _render_mermaid_png(diagram: str, scale: float = 2.0) -> bytes:
-    """Render a Mermaid diagram source to a high-resolution PNG.
-
-    Same engine as the Azure connector (bundled ``mermaidx``), 2x scale for
-    crisp zooming.
-    """
-    from mermaidx import render
-
-    return render(diagram).png(scale=scale, background="#ffffff")
-
-
 class RedmineConnector(TicketProtocol):
     """Redmine implementation of the TicketProtocol strategy.
 
-    Configuration comes from the environment:
-    ``MCP_REDMINE_URL`` (instance base URL), ``MCP_REDMINE_API_KEY``
-    (API key from a user's profile page) and ``MCP_REDMINE_PROJECT``
-    (project identifier or ID used as the default scope for tickets).
-
-    Works with all Redmine versions (1.x through 5.x). On older versions
-    where certain API endpoints are unavailable, the connector falls back
-    to alternative endpoints or discovery from existing data.
+    Works with Redmine 4.2 through 7.x. A :class:`RedmineVersionProfile`
+    is selected once at startup (``_ensure_profile``) and every
+    version-dependent choice is delegated to it.
     """
 
-    def __init__(self, client: RedmineClient | None = None):
+    def __init__(self, client: RedmineClient | None = None, profile: RedmineVersionProfile | None = None):
         self.client = client or RedmineClient()
+        self._profile = profile
+        self._last_version: tuple[int, int] | None = None
         self._project: dict | None = None
         self._statuses: list[dict] | None = None
         self._priorities: list[dict] | None = None
+        self._profile_ready = profile is not None
+
+    # ──────────────────────────────────────────────
+    #  PROFILE / STARTUP
+    # ──────────────────────────────────────────────
+
+    def _version_str(self) -> str:
+        return f"{self._last_version[0]}.{self._last_version[1]}" if self._last_version else "unknown"
+
+    async def _ensure_profile(self) -> RedmineVersionProfile:
+        """Select (and cache) the active version profile, probing once if needed."""
+        if self._profile_ready and self._profile is not None:
+            return self._profile
+
+        declared = os.getenv("MCP_REDMINE_VERSION", "").strip()
+        declared_version = parse_version(declared) if declared else None
+        profile = self._profile if self._profile is not None else select_profile(declared or None)
+
+        if profile is None:
+            # Auto-detect: a single probe, then pick the matching profile.
+            caps = await _probe_version(self.client)
+            self._last_version = caps.version or None
+            profile = _profile_for_version(caps.version)
+            logger.info("Redmine %s auto-detected -> profile %s", self._version_str(), profile.name)
+        else:
+            # Declared (or explicitly provided): probe to validate the server.
+            caps = await _probe_version(self.client)
+            self._last_version = caps.version or None
+            if declared_version is not None and caps.version and not profile.supports(caps.version):
+                raise ProfileMismatchError(
+                    f"MCP_REDMINE_VERSION={declared} but server is {self._version_str()} "
+                    f"(profile {profile.name} does not cover it)."
+                )
+            logger.info("Redmine profile: %s (server %s)", profile.name, self._version_str())
+
+        self._profile = profile
+        self._profile_ready = True
+        # Per-instance caches are invalidated on (re)selection.
+        self._project = None
+        self._priorities = None
+        self._statuses = None
+        return profile
 
     # ──────────────────────────────────────────────
     #  RESOLUTION HELPERS
@@ -265,27 +162,35 @@ class RedmineConnector(TicketProtocol):
             self._project = project
         return self._project
 
-    async def _get_statuses(self) -> list[dict]:
-        """Return the list of issue statuses, discovering them if the endpoint is unavailable.
+    async def _safe_resolve_project(self) -> dict | None:
+        """Resolve the project, returning ``None`` on HTTP/lookup errors."""
+        try:
+            return await self._resolve_project()
+        except (httpx.HTTPStatusError, ValueError):
+            return None
 
-        New Redmine exposes ``issues_statuses.json``. On older versions the
-        endpoint is missing, so we fall back to collecting distinct statuses
-        from a sample of existing issues.
+    async def _get_statuses(self) -> list[dict]:
+        """Return the list of issue statuses from the profile's endpoint.
+
+        Falls back to discovering statuses from existing issues when
+        ``issues_statuses.json`` is unavailable (404) on older or restricted
+        deployments.
         """
         if self._statuses is not None:
             return self._statuses
+        profile = await self._ensure_profile()
         try:
-            data = await self.client.get("issues_statuses.json")
+            data = await self.client.get(profile.status_endpoint())
             self._statuses = data.get("issues_statuses", [])
             return self._statuses
         except httpx.HTTPStatusError:
             pass
-        # Fallback: discover statuses from existing issues
-        project = await self._resolve_project()
-        data = await self.client.get(
-            "issues.json",
-            params={"project_id": project.get("id"), "limit": 100},
-        )
+        # Fallback: discover statuses from a sample of existing issues
+        project = await self._safe_resolve_project()
+        if project is None:
+            self._statuses = []
+            return self._statuses
+        data = await self.client.get("issues.json", params={"project_id": project.get("id"), "limit": 100})
         seen: dict[str, dict] = {}
         for issue in data.get("issues", []):
             s = issue.get("status") or {}
@@ -295,84 +200,50 @@ class RedmineConnector(TicketProtocol):
         return self._statuses
 
     async def _get_priorities(self) -> list[dict]:
-        """Return the list of priorities, discovering them from existing issues.
-
-        Most Redmine versions do not expose a ``priorities.json`` endpoint,
-        and the numeric IDs are not portable across instances (each
-        installation configures its own set). We therefore discover the
-        available priorities from a global sample of issues (not scoped to
-        the project, so that priorities unused in the project are still
-        found).
-        """
+        """Return the instance priorities, discovered from one page of issues."""
         if self._priorities is not None:
             return self._priorities
-        # Discover priorities globally (not per-project) by paginating
-        # through issues, so that all configured priorities are found even
-        # if the current project has no issues with a particular level.
-        # Redmine caps each request at 100 issues, so we page through.
-        seen: dict[str, dict] = {}
-        page_size = 100
-        for page in range(10):  # up to 1000 issues
-            data = await self.client.get(
-                "issues.json",
-                params={"limit": page_size, "offset": page * page_size},
-            )
-            issues = data.get("issues", [])
-            if not issues:
-                break
-            for issue in issues:
-                p = issue.get("priority") or {}
-                if p.get("id") is not None:
-                    seen[str(p.get("id"))] = {"id": p.get("id"), "name": p.get("name", "")}
-            if len(issues) < page_size:
-                break
-        self._priorities = list(seen.values())
+        self._priorities = await discover_priorities(self.client)
         return self._priorities
 
     async def _resolve_priority(self, priority: int) -> int | None:
-        """Map the protocol's 1-4 priority scale to an instance priority ID.
-
-        The mapping is by name (Urgent/High/Normal/Low), not by numeric ID,
-        because priority IDs are per-instance. Returns None when no priority
-        on this instance matches the requested level.
-        """
+        """Map the protocol's 1–4 scale to an instance priority id by name."""
         if priority <= 0:
             return None
-        wanted = {1: "urgent", 2: "high", 3: "normal", 4: "low"}.get(priority, "")
-        if not wanted:
-            return None
-        synonyms = {
-            "urgent": ["urgent", "urgente", "immediat", "immediat*"],
-            "high": ["high", "alta", "elevat"],
-            "normal": ["normal", "normale", "media", "medio"],
-            "low": ["low", "bassa", "basso"],
-        }[wanted]
-        for p in await self._get_priorities():
-            name = p.get("name", "").lower()
-            for syn in synonyms:
-                if syn.rstrip("*") in name:
-                    return p.get("id")
-        return None
+        return resolve_priority_id(await self._get_priorities(), priority)
+
+    async def _list_issue_types(self) -> list[dict]:
+        """Return the issue types (or trackers) from the profile's endpoint."""
+        profile = await self._ensure_profile()
+        data = await self.client.get(profile.issue_type_endpoint())
+        if profile.issue_type_endpoint() == "issue_types.json":
+            return [
+                {
+                    "id": t.get("id"),
+                    "name": t.get("name"),
+                    "description": "Default issue type" if t.get("is_default") else "",
+                }
+                for t in data.get("issue_types", [])
+            ]
+        return [
+            {"id": t.get("id"), "name": t.get("name", ""), "description": t.get("description", "") or ""}
+            for t in data.get("trackers", [])
+        ]
 
     async def _resolve_issue_type(self, ticket_type: str) -> int | None:
-        """Resolve an issue type (or tracker on old Redmine) by name (case-insensitive)."""
+        """Resolve an issue type (or tracker) by name (case-insensitive)."""
         if not ticket_type:
             return None
-        # Try new Redmine first
-        try:
-            data = await self.client.get("issue_types.json")
-            for t in data.get("issue_types", []):
-                if t.get("name", "").lower() == ticket_type.lower():
-                    return t.get("id")
-            return None
-        except httpx.HTTPStatusError:
-            pass
-        # Fallback: use trackers (old Redmine)
-        data = await self.client.get("trackers.json")
-        for t in data.get("trackers", []):
+        for t in await self._list_issue_types():
             if t.get("name", "").lower() == ticket_type.lower():
                 return t.get("id")
         return None
+
+    async def _safe_resolve_issue_type(self, ticket_type: str) -> int | None:
+        try:
+            return await self._resolve_issue_type(ticket_type)
+        except httpx.HTTPStatusError:
+            return None
 
     async def _resolve_status(self, state: str) -> dict | None:
         """Resolve a status by name (case-insensitive); None when absent."""
@@ -383,6 +254,23 @@ class RedmineConnector(TicketProtocol):
             if s.get("name", "").lower() == state.lower():
                 return s
         return None
+
+    async def _safe_resolve_status(self, state: str) -> int | None:
+        """Resolve a state to a status id, trying generic synonyms; None when absent."""
+        status = None
+        try:
+            status = await self._resolve_status(state)
+        except httpx.HTTPStatusError:
+            return None
+        if status is None:
+            for candidate in STATE_TO_STATUSES.get(state.lower(), ()):
+                try:
+                    status = await self._resolve_status(candidate)
+                except httpx.HTTPStatusError:
+                    break
+                if status:
+                    break
+        return status.get("id") if status else None
 
     async def _resolve_assignee(self, assigned_to: str) -> int | None:
         """Resolve a user by login or name; None when absent or when users.json is unavailable."""
@@ -415,55 +303,46 @@ class RedmineConnector(TicketProtocol):
                     return uid
             return None
         for u in data.get("users", []):
-            if str(u.get("login", "")).lower() == assigned_to.lower() or str(
-                u.get("name", "")
-            ).lower() == assigned_to.lower():
+            if (
+                str(u.get("login", "")).lower() == assigned_to.lower()
+                or str(u.get("name", "")).lower() == assigned_to.lower()
+            ):
                 return u.get("id")
         return None
 
-    async def _get_project_versions(self) -> list[dict]:
-        """Return the versions for the default project (works on all Redmine versions)."""
-        project = await self._resolve_project()
+    async def _safe_resolve_assignee(self, assigned_to: str) -> int | None:
+        """Resolve an assignee, swallowing HTTP errors as 'not found'."""
         try:
-            # Try per-project endpoint first (works on all versions)
-            data = await self.client.get(f"projects/{project.get('id')}/versions.json")
-            return data.get("versions", [])
+            return await self._resolve_assignee(assigned_to)
         except httpx.HTTPStatusError:
-            pass
-        # Fallback: global versions.json (new Redmine only)
-        data = await self.client.get("versions.json", params={"project_id": project.get("id")})
+            return None
+
+    async def _get_project_versions(self) -> list[dict]:
+        """Return the versions for the default project (works on all supported versions)."""
+        profile = await self._ensure_profile()
+        project = await self._resolve_project()
+        project_id = project.get("id")
+        if project_id is None:
+            return []
+        data = await self.client.get(profile.list_versions_path(project_id))
         return data.get("versions", [])
+
+    async def _safe_resolve_version_id(self, iteration_path: str) -> int | None:
+        try:
+            versions = await self._get_project_versions()
+            version = next((v for v in versions if v.get("name") == iteration_path), None)
+            return version.get("id") if version else None
+        except httpx.HTTPStatusError:
+            return None
 
     # ──────────────────────────────────────────────
     #  TICKET TYPES
     # ──────────────────────────────────────────────
 
     async def get_ticket_types(self) -> str:
-        """Retrieve all valid ticket types.
-
-        On new Redmine returns issue types; on old Redmine returns trackers
-        (the closest equivalent).
-        """
+        """Retrieve all valid ticket types (issue types or trackers per profile)."""
         try:
-            # Try new Redmine first
-            try:
-                data = await self.client.get("issue_types.json")
-                result = [
-                    {
-                        "name": t.get("name"),
-                        "description": "Default issue type" if t.get("is_default") else "",
-                    }
-                    for t in data.get("issue_types", [])
-                ]
-                return json.dumps({"ticket_types": result, "total": len(result)}, ensure_ascii=False)
-            except httpx.HTTPStatusError:
-                pass
-            # Fallback: trackers
-            data = await self.client.get("trackers.json")
-            result = [
-                {"name": t.get("name", ""), "description": t.get("description", "") or ""}
-                for t in data.get("trackers", [])
-            ]
+            result = await self._list_issue_types()
             return json.dumps({"ticket_types": result, "total": len(result)}, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
@@ -471,42 +350,29 @@ class RedmineConnector(TicketProtocol):
     async def check(self) -> str:
         """Verify the connection to Redmine.
 
-        Uses ``my_account.json`` on new Redmine; falls back to
-        ``projects.json`` on older versions.
+        Ensures the profile is selected (probing the server) and reports the
+        authenticated user. If ``my_account.json`` is unavailable (404 on
+        restricted deployments), falls back to confirming connectivity via
+        ``projects.json``.
         """
         try:
+            profile = await self._ensure_profile()
+            user: dict = {}
             try:
-                data = await self.client.get("my_account.json")
+                data = await self.client.get(profile.check_user_endpoint())
                 user = data.get("user", {})
-                return json.dumps(
-                    {
-                        "status": "ok",
-                        "backend": "redmine",
-                        "url": self.client.base_url,
-                        "project": self.client.project,
-                        "user": user.get("name", user.get("login", "")),
-                        "message": f"Connection to Redmine {self.client.base_url} OK as {user.get('login', '')}.",
-                    },
-                    ensure_ascii=False,
-                )
             except httpx.HTTPStatusError:
-                pass
-            # Fallback: verify via projects.json
-            data = await self.client.get("projects.json")
-            projects = data.get("projects", [])
-            project = next((p for p in projects if p.get("identifier") == self.client.project), None)
-            if project is None and self.client.project:
-                return json.dumps(
-                    {"error": f"Project '{self.client.project}' not found."},
-                    ensure_ascii=False,
-                )
+                # my_account.json may 404 for non-admin or restricted users;
+                # fall back to projects.json to confirm connectivity.
+                await self.client.get("projects.json")
             return json.dumps(
                 {
                     "status": "ok",
                     "backend": "redmine",
                     "url": self.client.base_url,
                     "project": self.client.project,
-                    "user": "unknown (my_account.json not available)",
+                    "user": user.get("name", user.get("login", "unknown")),
+                    "profile": profile.name,
                     "message": f"Connection to Redmine {self.client.base_url} OK.",
                 },
                 ensure_ascii=False,
@@ -519,10 +385,7 @@ class RedmineConnector(TicketProtocol):
     # ──────────────────────────────────────────────
 
     async def get_ticket(self, ticket_id: int) -> str:
-        """Retrieve full details of a Ticket (Redmine issue) by ID.
-
-        Includes the HTML description in the ``description`` key.
-        """
+        """Retrieve full details of a Ticket (Redmine issue) by ID."""
         try:
             data = await self.client.get(f"issues/{ticket_id}.json")
             return format_ticket(data.get("issue", {}), include_description=True)
@@ -536,10 +399,8 @@ class RedmineConnector(TicketProtocol):
         is required or Redmine omits the ``journals`` key entirely.
         """
         try:
-            data = await self.client.get(
-                f"issues/{ticket_id}.json", params={"include": ["journals"]}
-            )
-            journals = (data.get("issue", {}).get("journals", []) or [])
+            data = await self.client.get(f"issues/{ticket_id}.json", params={"include": ["journals"]})
+            journals = data.get("issue", {}).get("journals", []) or []
             result = []
             for j in journals:
                 note = (j.get("notes") or "").strip()
@@ -550,7 +411,7 @@ class RedmineConnector(TicketProtocol):
                         "id": j.get("id"),
                         "author": (j.get("user", {}) or {}).get("name", "Unknown"),
                         "created_date": j.get("created_on", ""),
-                        "text": _strip_wiki(note),
+                        "text": strip_wiki(note),
                     }
                 )
             if not result:
@@ -575,7 +436,7 @@ class RedmineConnector(TicketProtocol):
                 f"issues/{ticket_id}.json",
                 data={"issue": {"notes": text}},
             )
-            journals = (data.get("issue", {}).get("journals", []) or [])
+            journals = data.get("issue", {}).get("journals", []) or []
             comment_id = journals[-1].get("id") if journals else None
             return json.dumps(
                 {
@@ -605,7 +466,7 @@ class RedmineConnector(TicketProtocol):
 
         Args:
             ticket_id: ID of the issue
-            diagram: Mermaid diagram source (e.g. "flowchart TD\\n  A[Start] --> B[End]")
+            diagram: Mermaid diagram source
             title: Optional label used as the image caption.
             section: Ignored on Redmine (kept for protocol consistency).
         """
@@ -613,19 +474,22 @@ class RedmineConnector(TicketProtocol):
             return json.dumps({"error": "diagram is required."})
 
         try:
-            png_bytes = await asyncio.to_thread(_render_mermaid_png, diagram)
+            png_bytes = await asyncio.to_thread(render_mermaid_png, diagram)
         except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"Failed to render Mermaid diagram: {exc}"})
 
         file_name = f"mermaid-{ticket_id}.png"
-        async with httpx.AsyncClient(timeout=30.0, verify=self.client.verify) as client:
-            response = await client.post(
-                f"{self.client.base_url}/attachments.json",
-                headers={"X-Redmine-API-Key": self.client.api_key, "Accept": "application/json"},
-                files={"file": (file_name, png_bytes, "image/png")},
-            )
-            response.raise_for_status()
-            attachment = response.json().get("attachment", {})
+        try:
+            async with httpx.AsyncClient(timeout=30.0, verify=self.client.verify) as client:
+                response = await client.post(
+                    f"{self.client.base_url}/attachments.json",
+                    headers={"X-Redmine-API-Key": self.client.api_key, "Accept": "application/json"},
+                    files={"file": (file_name, png_bytes, "image/png")},
+                )
+                response.raise_for_status()
+                attachment = response.json().get("attachment", {})
+        except httpx.HTTPStatusError as e:
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
         try:
             issue = await self.client.get(f"issues/{ticket_id}.json")
@@ -670,14 +534,17 @@ class RedmineConnector(TicketProtocol):
         if blob is None:
             return json.dumps({"error": f"Could not read {image_path!r}."})
 
-        async with httpx.AsyncClient(timeout=30.0, verify=self.client.verify) as client:
-            response = await client.post(
-                f"{self.client.base_url}/attachments.json",
-                headers={"X-Redmine-API-Key": self.client.api_key, "Accept": "application/json"},
-                files={"file": (file_name, blob)},
-            )
-            response.raise_for_status()
-            attachment = response.json().get("attachment", {})
+        try:
+            async with httpx.AsyncClient(timeout=30.0, verify=self.client.verify) as client:
+                response = await client.post(
+                    f"{self.client.base_url}/attachments.json",
+                    headers={"X-Redmine-API-Key": self.client.api_key, "Accept": "application/json"},
+                    files={"file": (file_name, blob)},
+                )
+                response.raise_for_status()
+                attachment = response.json().get("attachment", {})
+        except httpx.HTTPStatusError as e:
+            return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
         note = comment or file_name
         try:
@@ -714,13 +581,12 @@ class RedmineConnector(TicketProtocol):
         """Create a new Ticket (Redmine issue).
 
         Args:
-            ticket_type: Issue type name (new Redmine) or tracker name (old Redmine).
+            ticket_type: Issue type name (or tracker name on 4.2 – 6.x).
                 Defaults to the project's default issue type when empty.
             title: Issue subject
             description: HTML or Markdown description (Markdown is converted)
             assigned_to: User login or full name of the assignee
-            priority: Priority (1-4), mapped to Redmine's built-in priorities
-                (Urgent, High, Normal, Low)
+            priority: Priority (1-4), mapped to the instance priorities by name
             tags: Ignored for Redmine (issues have no native tags)
             area_path: Ignored for Redmine
             iteration_path: Version name to assign (e.g. 'v1.2')
@@ -729,38 +595,35 @@ class RedmineConnector(TicketProtocol):
             return json.dumps({"error": "title is required."})
 
         try:
-            project = await self._resolve_project()
+            project = await self._safe_resolve_project()
+            if project is None:
+                return json.dumps({"error": f"Could not resolve project '{self.client.project}'."})
+            profile = await self._ensure_profile()
             issue: dict[str, Any] = {
                 "project_id": project.get("id"),
                 "subject": title,
             }
             if ticket_type:
-                issue_type_id = await self._resolve_issue_type(ticket_type)
+                issue_type_id = await self._safe_resolve_issue_type(ticket_type)
                 if issue_type_id is None:
-                    return json.dumps(
-                        {"error": f"ticket_type '{ticket_type}' not found on this Redmine instance."}
-                    )
-                issue["tracker_id"] = issue_type_id
+                    return json.dumps({"error": f"ticket_type '{ticket_type}' not found on this Redmine instance."})
+                issue[profile.issue_type_id_field()] = issue_type_id
             if description:
-                issue["description"] = _markdown_to_html(description)
+                issue["description"] = markdown_to_html(description)
             if assigned_to:
-                assignee_id = await self._resolve_assignee(assigned_to)
+                assignee_id = await self._safe_resolve_assignee(assigned_to)
                 if assignee_id is None:
-                    return json.dumps(
-                        {"error": f"assignee '{assigned_to}' not found on this Redmine instance."}
-                    )
+                    return json.dumps({"error": f"assignee '{assigned_to}' not found on this Redmine instance."})
                 issue["assigned_to_id"] = assignee_id
             if priority > 0:
                 priority_id = await self._resolve_priority(priority)
                 if priority_id is None:
-                    return json.dumps(
-                        {"error": f"priority {priority} not found on this Redmine instance."}
-                    )
+                    return json.dumps({"error": f"priority {priority} not found on this Redmine instance."})
                 issue["priority_id"] = priority_id
             if iteration_path:
-                versions = await self._get_project_versions()
-                version = next((v for v in versions if v.get("name") == iteration_path), None)
-                if version is None:
+                version_id = await self._safe_resolve_version_id(iteration_path)
+                if version_id is None:
+                    versions = await self._get_project_versions()
                     return json.dumps(
                         {
                             "error": f"version '{iteration_path}' not found in project "
@@ -768,13 +631,11 @@ class RedmineConnector(TicketProtocol):
                             "available_iterations": [v.get("name") for v in versions],
                         }
                     )
-                issue["fixed_version_id"] = version.get("id")
+                issue["fixed_version_id"] = version_id
 
             data = await self.client.post("issues.json", data={"issue": issue})
             created = data.get("issue", {})
-            created_type = (
-                created.get("issue_type", {}) or created.get("tracker", {}) or {}
-            ).get("name", "Issue")
+            created_type = first_field(created, "issue_type").get("name", "Issue")
             return json.dumps(
                 {
                     "success": True,
@@ -807,8 +668,8 @@ class RedmineConnector(TicketProtocol):
             title: New subject
             description: New description (HTML or Markdown)
             assigned_to: New assignee login or name (leave empty to keep)
-            state: New status. Accepts a Redmine status name (e.g. 'Closed',
-                'Chiusa') or a generic word (open/active/resolved/closed/done).
+            state: New status. Accepts a Redmine status name or a generic word
+                (open/active/resolved/closed/done).
             priority: New priority (1-4)
             tags: Ignored for Redmine
             area_path: Ignored for Redmine
@@ -819,40 +680,33 @@ class RedmineConnector(TicketProtocol):
         if title:
             issue["subject"] = title
         if description:
-            issue["description"] = _markdown_to_html(description)
+            issue["description"] = markdown_to_html(description)
         if assigned_to:
             assignee_id = await self._safe_resolve_assignee(assigned_to)
             if assignee_id is None:
                 return json.dumps({"error": f"assignee '{assigned_to}' not found on this Redmine instance."})
             issue["assigned_to_id"] = assignee_id
         if state:
-            status = await self._resolve_status(state)
-            if status is None:
-                for candidate in STATE_TO_STATUSES.get(state.lower(), []):
-                    status = await self._resolve_status(candidate)
-                    if status:
-                        break
-            if status is None:
-                return json.dumps(
-                    {"error": f"state '{state}' does not match any status on this Redmine instance."}
-                )
-            issue["status_id"] = status.get("id")
+            status_id = await self._safe_resolve_status(state)
+            if status_id is None:
+                return json.dumps({"error": f"state '{state}' does not match any status on this Redmine instance."})
+            issue["status_id"] = status_id
         if priority > 0:
             priority_id = await self._resolve_priority(priority)
             if priority_id is None:
-                return json.dumps(
-                    {"error": f"priority {priority} not found on this Redmine instance."}
-                )
+                return json.dumps({"error": f"priority {priority} not found on this Redmine instance."})
             issue["priority_id"] = priority_id
         if iteration_path:
-            versions = await self._get_project_versions()
-            version = next((v for v in versions if v.get("name") == iteration_path), None)
-            if version is None:
+            version_id = await self._safe_resolve_version_id(iteration_path)
+            if version_id is None:
+                versions = await self._get_project_versions()
                 return json.dumps(
-                    {"error": f"version '{iteration_path}' not found.",
-                     "available_iterations": [v.get("name") for v in versions]}
+                    {
+                        "error": f"version '{iteration_path}' not found.",
+                        "available_iterations": [v.get("name") for v in versions],
+                    }
                 )
-            issue["fixed_version_id"] = version.get("id")
+            issue["fixed_version_id"] = version_id
 
         if not issue:
             return json.dumps({"error": "No fields to update provided."})
@@ -870,13 +724,6 @@ class RedmineConnector(TicketProtocol):
             )
         except httpx.HTTPStatusError as e:
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
-
-    async def _safe_resolve_assignee(self, assigned_to: str) -> int | None:
-        """Resolve an assignee, swallowing HTTP errors as 'not found'."""
-        try:
-            return await self._resolve_assignee(assigned_to)
-        except httpx.HTTPStatusError:
-            return None
 
     # ──────────────────────────────────────────────
     #  SEARCH / QUERY
@@ -897,12 +744,10 @@ class RedmineConnector(TicketProtocol):
 
         Args:
             query: Free-text search on the ticket subject. When provided,
-                it is combined with the other filters (AND). Note: older
-                Redmine versions do not support the ``query`` REST parameter
-                (it returns HTTP 500), so the search is applied to the
-                subject field with a wildcard, which is the closest
-                portable equivalent.
-            ticket_type: Issue type name (new Redmine) or tracker name (old Redmine)
+                it is combined with the other filters (AND). Applied to the
+                subject field with a wildcard, which is portable across all
+                supported versions.
+            ticket_type: Issue type name (or tracker name on 4.2 – 6.x)
             state: Redmine status name or generic word (open/active/closed)
             assigned_to: Assignee login or name
             tags: Ignored for Redmine
@@ -916,23 +761,21 @@ class RedmineConnector(TicketProtocol):
             "limit": max_results,
             "sort": "updated_on:desc",
         }
-        try:
-            project = await self._resolve_project()
-            params["project_id"] = project.get("id")
-        except (httpx.HTTPStatusError, ValueError) as e:
-            return json.dumps({"error": f"Could not resolve project: {e}"})
+        profile = await self._ensure_profile()
+        project = await self._safe_resolve_project()
+        if project is None:
+            return json.dumps({"error": f"Could not resolve project '{self.client.project}'."})
+        params["project_id"] = project.get("id")
 
         if ticket_type:
             issue_type_id = await self._safe_resolve_issue_type(ticket_type)
             if issue_type_id is None:
                 return json.dumps({"error": f"ticket_type '{ticket_type}' not found on this Redmine instance."})
-            params["tracker_id"] = issue_type_id
+            params[profile.issue_type_id_field()] = issue_type_id
         if state:
             status_id = await self._safe_resolve_status(state)
             if status_id is None:
-                return json.dumps(
-                    {"error": f"state '{state}' does not match any status on this Redmine instance."}
-                )
+                return json.dumps({"error": f"state '{state}' does not match any status on this Redmine instance."})
             params["status_id"] = status_id
         if assigned_to:
             assignee_id = await self._safe_resolve_assignee(assigned_to)
@@ -940,15 +783,12 @@ class RedmineConnector(TicketProtocol):
                 return json.dumps({"error": f"assignee '{assigned_to}' not found on this Redmine instance."})
             params["assigned_to_id"] = assignee_id
         if iteration_path:
-            versions = await self._get_project_versions()
-            version = next((v for v in versions if v.get("name") == iteration_path), None)
-            if version:
-                params["version_id"] = version.get("id")
+            version_id = await self._safe_resolve_version_id(iteration_path)
+            if version_id is not None:
+                params["version_id"] = version_id
         if query:
-            # The 'query' REST parameter is not supported by older Redmine
-            # versions (it returns HTTP 500). Use the subject field with a
-            # wildcard instead, which is portable across all versions.
-            params["subject"] = f"~{query}"
+            key, value = profile.free_text_param(query)
+            params[key] = value
 
         try:
             data = await self.client.get("issues.json", params=params)
@@ -968,7 +808,7 @@ class RedmineConnector(TicketProtocol):
     async def get_tickets_needing_my_reply(self, my_display_name: str) -> str:
         """Find active tickets assigned to a user where the last comment was not written by them."""
         try:
-            assignee_id = await self._resolve_assignee(my_display_name)
+            assignee_id = await self._safe_resolve_assignee(my_display_name)
             if assignee_id is None:
                 return json.dumps(
                     {
@@ -976,9 +816,17 @@ class RedmineConnector(TicketProtocol):
                         "message": f"No user matching '{my_display_name}' found.",
                     }
                 )
-            params = {"assigned_to_id": assignee_id, "sort": "updated_on:desc", "limit": 20}
-            project = await self._resolve_project()
-            params["project_id"] = project.get("id")
+            project = await self._safe_resolve_project()
+            if project is None:
+                return json.dumps({"error": f"Could not resolve project '{self.client.project}'."})
+            # include=journals is required, else Redmine omits the journals key.
+            params = {
+                "assigned_to_id": assignee_id,
+                "sort": "updated_on:desc",
+                "limit": 20,
+                "project_id": project.get("id"),
+                "include": ["journals"],
+            }
             data = await self.client.get("issues.json", params=params)
             issues = data.get("issues", [])
 
@@ -992,7 +840,7 @@ class RedmineConnector(TicketProtocol):
                 for j in reversed(journals):
                     note = (j.get("notes") or "").strip()
                     if note:
-                        last_note = _strip_wiki(note)
+                        last_note = strip_wiki(note)
                         last_author = (j.get("user", {}) or {}).get("name", "")
                         last_date = j.get("created_on", "")
                         break
@@ -1069,9 +917,7 @@ class RedmineConnector(TicketProtocol):
                 }
             )
 
-        payload: dict[str, Any] = {
-            "issue": {"relations": [{"to_issue_id": target_id, "relation_type": relation_id}]}
-        }
+        payload: dict[str, Any] = {"issue": {"relations": [{"to_issue_id": target_id, "relation_type": relation_id}]}}
         if comment:
             payload["issue"]["notes"] = comment
 
@@ -1093,8 +939,8 @@ class RedmineConnector(TicketProtocol):
         """Retrieve all relations of a Ticket (Redmine issue)."""
         try:
             data = await self.client.get(f"issues/{ticket_id}.json")
-            relations = (data.get("issue", {}).get("relations", []) or [])
-            result = []
+            relations = data.get("issue", {}).get("relations", []) or []
+            result: list[dict] = []
             for rel in relations:
                 target = rel.get("issue", {}) or {}
                 direction = (
@@ -1124,18 +970,17 @@ class RedmineConnector(TicketProtocol):
         """Retrieve all versions of the project (mapped to iterations)."""
         try:
             versions = await self._get_project_versions()
-            result = []
-            for v in versions:
-                result.append(
-                    {
-                        "id": v.get("id"),
-                        "name": v.get("name", ""),
-                        "path": v.get("name", ""),
-                        "start_date": v.get("due_date", ""),
-                        "finish_date": v.get("due_date", ""),
-                        "state": v.get("status", ""),
-                    }
-                )
+            result = [
+                {
+                    "id": v.get("id"),
+                    "name": v.get("name", ""),
+                    "path": v.get("name", ""),
+                    "start_date": v.get("due_date", ""),
+                    "finish_date": v.get("due_date", ""),
+                    "state": v.get("status", ""),
+                }
+                for v in versions
+            ]
             return json.dumps({"iterations": result, "total": len(result)}, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
@@ -1148,9 +993,9 @@ class RedmineConnector(TicketProtocol):
             iteration_path: Version name to assign
         """
         try:
-            versions = await self._get_project_versions()
-            version = next((v for v in versions if v.get("name") == iteration_path), None)
-            if version is None:
+            version_id = await self._safe_resolve_version_id(iteration_path)
+            if version_id is None:
+                versions = await self._get_project_versions()
                 return json.dumps(
                     {
                         "error": f"version '{iteration_path}' not found.",
@@ -1159,7 +1004,7 @@ class RedmineConnector(TicketProtocol):
                 )
             await self.client.put(
                 f"issues/{ticket_id}.json",
-                data={"issue": {"fixed_version_id": version.get("id")}},
+                data={"issue": {"fixed_version_id": version_id}},
             )
             return json.dumps(
                 {
@@ -1173,57 +1018,71 @@ class RedmineConnector(TicketProtocol):
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
     async def get_area_paths(self) -> str:
-        """Retrieve all issue trackers of the instance (mapped to area paths).
+        """Retrieve all issue trackers/issue types of the instance (mapped to area paths).
 
         Redmine has no area paths; the closest structural equivalent is the
-        set of issue trackers, which is what other backends expose as the
-        project's working categories.
+        set of issue trackers (or issue types on 7.x).
         """
         try:
-            data = await self.client.get("trackers.json")
-            trackers = data.get("trackers", [])
-            result = [
-                {
-                    "name": t.get("name", ""),
-                    "description": t.get("description", "") or "",
-                    "color": t.get("color", ""),
-                }
-                for t in trackers
-            ]
+            result = await self._list_issue_types()
             return json.dumps({"area_paths": result, "total": len(result)}, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
 
-    # ──────────────────────────────────────────────
-    #  SAFE RESOLVERS (used by search, return None on HTTP errors)
-    # ──────────────────────────────────────────────
 
-    async def _safe_resolve_issue_type(self, ticket_type: str) -> int | None:
-        try:
-            return await self._resolve_issue_type(ticket_type)
-        except httpx.HTTPStatusError:
-            return None
+# ──────────────────────────────────────────────
+#  Module-level startup helpers (single probe)
+# ──────────────────────────────────────────────
 
-    async def _safe_resolve_status(self, state: str) -> int | None:
-        status = None
-        try:
-            status = await self._resolve_status(state)
-        except httpx.HTTPStatusError:
-            return None
-        if status is None:
-            for candidate in STATE_TO_STATUSES.get(state.lower(), []):
-                try:
-                    status = await self._resolve_status(candidate)
-                except httpx.HTTPStatusError:
-                    break
-                if status:
-                    break
-        return status.get("id") if status else None
 
-    async def _safe_resolve_version_id(self, iteration_path: str) -> int | None:
-        try:
-            versions = await self._get_project_versions()
-            version = next((v for v in versions if v.get("name") == iteration_path), None)
-            return version.get("id") if version else None
-        except httpx.HTTPStatusError:
-            return None
+async def _probe_version(client: RedmineClient) -> RedmineCapabilities:
+    """Single probe: read ``X-Redmine-Version`` and build a capabilities snapshot.
+
+    Uses ``projects.json`` as the probe endpoint because it is available on
+    all supported Redmine versions and does not require special permissions
+    (unlike ``my_account.json``, which requires admin or self-access and may
+    404 on restricted deployments).
+
+    When the ``X-Redmine-Version`` header is absent (some builds strip it),
+    the version defaults to ``(0, 0)`` and the caller falls back to the
+    legacy profile (4.x) rather than failing.
+
+    Raises :class:`UnsupportedRedmineVersionError` only when the header is
+    present AND the version is outside the supported 4.2 – 7.x range.
+    """
+    _body, headers = await client.get_with_headers("projects.json")
+    raw = (headers.get("X-Redmine-Version") or headers.get("x-redmine-version") or "").strip()
+    version = parse_version(raw) if raw else (0, 0)
+    # Only raise when we actually detected a version AND it's out of range.
+    # (0, 0) means "unknown" — the caller will use the legacy profile.
+    if version and version != (0, 0) and not is_supported(version):
+        raise UnsupportedRedmineVersionError(
+            f"Unsupported Redmine version {version[0]}.{version[1]} (supported range 4.2 – 7.x)."
+        )
+    major = version[0] if version else 0
+    return RedmineCapabilities(
+        version=version,
+        has_issue_types=major >= 7,
+        has_statuses_endpoint=True,
+        has_my_account=version != (0, 0),
+        has_global_versions=major >= 7,
+    )
+
+
+def _profile_for_version(version: tuple[int, int]) -> RedmineVersionProfile:
+    """Return the profile covering ``version``.
+
+    When the version is unknown ``(0, 0)`` (no ``X-Redmine-Version`` header),
+    falls back to the **legacy** profile (4.x) because it uses the most
+    conservative endpoint naming (``trackers.json``) which is also valid on
+    newer Redmine versions (they still expose ``trackers.json`` as an alias).
+    """
+    if version == (0, 0):
+        # Unknown version: use the legacy profile (trackers) which is the
+        # safest default — newer Redmine still serves trackers.json.
+        return VERSION_PROFILES[0]()
+    for cls in VERSION_PROFILES:
+        candidate = cls()
+        if candidate.supports(version):
+            return candidate
+    return VERSION_PROFILES[0]()
