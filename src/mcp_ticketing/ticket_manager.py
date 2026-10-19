@@ -9,7 +9,7 @@ without knowing which backend serves the tickets.
 from mcp_ticketing.azure_connector import AzureConnector
 from mcp_ticketing.github_connector import GithubConnector
 from mcp_ticketing.protocol import TicketProtocol
-from mcp_ticketing.redmine_connector import RedmineConnector
+from mcp_ticketing.redmine import RedmineConnector
 
 BACKENDS: dict[str, type[TicketProtocol]] = {
     "azure": AzureConnector,

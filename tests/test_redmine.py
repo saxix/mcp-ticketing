@@ -1,10 +1,14 @@
 """Offline tests for the Redmine connector (no network).
 
 Real-API integration tests skip automatically when the Redmine environment
-variables are not set (see the session-scoped ``pytestmark`` pattern used by
-``test_azure.py`` / ``test_github.py``). The tests here mock the HTTP client
-to cover the projection shape, the create/update payload building, state and
-assignee resolution, and the search parameter mapping.
+variables are not set. The tests here mock the HTTP client to cover the
+projection shape, the create/update payload building, state and assignee
+resolution, and the search parameter mapping.
+
+Version-specific behaviour (trackers vs issue_types, fixed_version vs
+version) is covered by the per-profile test modules (``test_redmine_v*.py``);
+the helpers that no longer depend on a version (``format_ticket`` and
+``strip_wiki``) are tested here against both legacy and modern payloads.
 """
 
 import json
@@ -13,8 +17,9 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from mcp_ticketing.redmine_connector import RedmineConnector, _strip_wiki
-from mcp_ticketing.redmine_connector import format_ticket as redmine_format_ticket
+from mcp_ticketing.redmine import RedmineConnector
+from mcp_ticketing.redmine.base import strip_wiki
+from mcp_ticketing.redmine.connector import format_ticket
 
 REDMINE_ISSUE = {
     "id": 4242,
@@ -88,45 +93,63 @@ BASE_KEYS = {
 
 @pytest.fixture(autouse=True)
 def _redmine_env(monkeypatch):
-    """Point the Redmine connector at a fake instance for offline tests."""
+    """Point the Redmine connector at a fake instance for offline tests.
+
+    ``MCP_REDMINE_VERSION`` is unset so the connector would auto-detect; the
+    per-test connector is always built with an explicit profile (see
+    ``_connector``), which skips the probe.
+    """
     monkeypatch.setenv("MCP_REDMINE_URL", "http://redmine.test")
     monkeypatch.setenv("MCP_REDMINE_API_KEY", "test-key")
     monkeypatch.setenv("MCP_REDMINE_PROJECT", "openextras")
+    monkeypatch.delenv("MCP_REDMINE_VERSION", raising=False)
     yield
 
 
-def _connector(responses: dict, post=None, put=None, base_url: str = "http://redmine.test") -> RedmineConnector:
-    """Build a RedmineConnector whose client returns canned JSON per path.
+def _make_client(responses: dict, post=None, put=None, base_url: str = "http://redmine.test"):
+    """Build a mock RedmineClient returning canned JSON per path.
 
     ``responses`` maps a path (or path prefix) to the JSON the GET should
-    return; ``post``/``put`` are the return values for the write calls.
-    The mock also exposes ``base_url``/``api_key``/``project`` like the real
-    ``RedmineClient`` (the connector reads them from ``self.client``).
+    return. Unknown paths raise a 404 ``HTTPStatusError``. The mock also
+    exposes ``get_with_headers`` (the version probe) and the client attributes
+    the connector reads.
     """
     client = AsyncMock()
     client.base_url = base_url
     client.api_key = "test-key"
     client.project = "openextras"
+    client.verify = True
 
     async def _get(path: str, *args, **kwargs):
         for prefix, payload in responses.items():
             if path.startswith(prefix):
                 return payload
-        # Simulate a 404 for endpoints not present in the mock, so the
-        # connector's fallback logic (old Redmine) can be exercised.
-        import httpx as _httpx
-        resp = _httpx.Response(404, json={"status": 404, "error": "Not Found"})
-        raise _httpx.HTTPStatusError(
-            f"404 for {path}", request=_httpx.Request("GET", f"http://redmine.test/{path}"),
+        resp = httpx.Response(404, json={"status": 404, "error": "Not Found"})
+        raise httpx.HTTPStatusError(
+            f"404 for {path}",
+            request=httpx.Request("GET", f"{base_url}/{path}"),
             response=resp,
         )
 
+    async def _get_with_headers(path: str, *args, **kwargs):
+        body = await _get(path, *args, **kwargs)
+        return body, {}
+
     client.get.side_effect = _get
+    client.get_with_headers.side_effect = _get_with_headers
     if post is not None:
         client.post = AsyncMock(return_value=post)
     if put is not None:
         client.put = AsyncMock(return_value=put)
-    return RedmineConnector(client=client)
+    return client
+
+
+def _connector(
+    responses: dict, profile, post=None, put=None, base_url: str = "http://redmine.test"
+) -> RedmineConnector:
+    """Build a RedmineConnector bound to ``profile`` (no startup probe)."""
+    client = _make_client(responses, post=post, put=put, base_url=base_url)
+    return RedmineConnector(client=client, profile=profile)
 
 
 def _load(resp: str) -> dict:
@@ -139,19 +162,19 @@ def _load(resp: str) -> dict:
 
 
 def test_redmine_format_ticket_omits_description_by_default():
-    parsed = _load(redmine_format_ticket(REDMINE_ISSUE))
+    parsed = _load(format_ticket(REDMINE_ISSUE))
     assert "description" not in parsed
     assert set(parsed) == BASE_KEYS
 
 
 def test_redmine_format_ticket_includes_description_on_request():
-    parsed = _load(redmine_format_ticket(REDMINE_ISSUE, include_description=True))
+    parsed = _load(format_ticket(REDMINE_ISSUE, include_description=True))
     assert set(parsed) == BASE_KEYS | {"description"}
     assert parsed["description"] == REDMINE_ISSUE["description"]
 
 
 def test_redmine_format_ticket_fields():
-    parsed = _load(redmine_format_ticket(REDMINE_ISSUE, include_description=True))
+    parsed = _load(format_ticket(REDMINE_ISSUE, include_description=True))
     assert parsed["id"] == 4242
     assert parsed["title"] == "Configurable Payee Type"
     assert parsed["type"] == "Bug"
@@ -161,73 +184,58 @@ def test_redmine_format_ticket_fields():
     assert parsed["priority"] == "Normal"
 
 
-def test_redmine_format_ticket_old_redmine_fields():
-    """Old Redmine uses 'tracker' and 'fixed_version' instead of 'issue_type' and 'version'."""
-    old_issue = {
-        "id": 100,
-        "subject": "Old Redmine Issue",
-        "tracker": {"id": 5, "name": "Bug"},
-        "status": {"id": 1, "name": "Nuova"},
-        "assigned_to": {"id": 3, "name": "Mario Rossi"},
-        "priority": {"id": 5, "name": "Alta"},
-        "fixed_version": {"id": 42, "name": "2.1.x"},
-        "created_on": "2026-01-01T00:00:00Z",
-        "updated_on": "2026-01-02T00:00:00Z",
-        "description": "<p>Old Redmine</p>",
-    }
-    parsed = _load(redmine_format_ticket(old_issue, include_description=True))
+def test_redmine_format_ticket_modern_fields():
+    """New Redmine uses 'issue_type' and 'version' instead of 'tracker'/'fixed_version'."""
+    parsed = _load(format_ticket(REDMINE_ISSUE_NEW, include_description=True))
     assert parsed["type"] == "Bug"
-    assert parsed["state"] == "Nuova"
-    assert parsed["iteration_path"] == "2.1.x"
-    assert parsed["priority"] == "Alta"
+    assert parsed["iteration_path"] == "v1.2"
+    assert parsed["state"] == "New"
 
 
 def test_redmine_format_ticket_unassigned_defaults():
-    parsed = _load(redmine_format_ticket({"id": 1, "subject": "x"}, include_description=True))
+    parsed = _load(format_ticket({"id": 1, "subject": "x"}, include_description=True))
     assert parsed["assigned_to"] == "Unassigned"
     assert parsed["description"] == ""
 
 
 # ──────────────────────────────────────────────
-#  _strip_wiki — wiki markup to plain text
+#  strip_wiki — wiki markup to plain text
 # ──────────────────────────────────────────────
 
 
 def test_strip_wiki_plain_text_unchanged():
-    """Plain text without wiki markers must pass through (stripped)."""
-    assert _strip_wiki("First note") == "First note"
-    assert _strip_wiki("  spaced  ") == "spaced"
+    assert strip_wiki("First note") == "First note"
+    assert strip_wiki("  spaced  ") == "spaced"
 
 
 def test_strip_wiki_headings():
-    assert _strip_wiki("h1. Title\nh2. Sub") == "Title\nSub"
+    assert strip_wiki("h1. Title\nh2. Sub") == "Title\nSub"
 
 
 def test_strip_wiki_emphasis():
-    assert _strip_wiki("**bold** and *italic*") == "bold and italic"
-    assert _strip_wiki("__bold__ and _italic_") == "bold and italic"
+    assert strip_wiki("**bold** and *italic*") == "bold and italic"
+    assert strip_wiki("__bold__ and _italic_") == "bold and italic"
 
 
 def test_strip_wiki_lists():
-    assert _strip_wiki("* a\n* b\n# 1\n# 2") == "a\nb\n1\n2"
+    assert strip_wiki("* a\n* b\n# 1\n# 2") == "a\nb\n1\n2"
 
 
 def test_strip_wiki_table():
-    assert _strip_wiki("| a | b |\n| 1 | 2 |") == "a\tb\n1\t2"
+    assert strip_wiki("| a | b |\n| 1 | 2 |") == "a\tb\n1\t2"
 
 
 def test_strip_wiki_html():
-    assert _strip_wiki("<p>Hello <b>world</b></p>") == "Hello world"
-    assert _strip_wiki("a<br>b<br/>c") == "a\nb\nc"
+    assert strip_wiki("<p>Hello <b>world</b></p>") == "Hello world"
+    assert strip_wiki("a<br>b<br/>c") == "a\nb\nc"
 
 
 def test_strip_wiki_code_block():
-    assert _strip_wiki("{{ code }}") == "code"
+    assert strip_wiki("{{ code }}") == "code"
 
 
 def test_strip_wiki_preserves_ident_underscores():
-    """Identifiers with internal underscores must not be treated as italic."""
-    assert _strip_wiki("STATO_DISTINTA e TIPO_DISTINTA") == "STATO_DISTINTA e TIPO_DISTINTA"
+    assert strip_wiki("STATO_DISTINTA e TIPO_DISTINTA") == "STATO_DISTINTA e TIPO_DISTINTA"
 
 
 # ──────────────────────────────────────────────
@@ -237,7 +245,9 @@ def test_strip_wiki_preserves_ident_underscores():
 
 @pytest.mark.asyncio
 async def test_get_ticket_returns_description():
-    connector = _connector({"issues/4242.json": {"issue": REDMINE_ISSUE}})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({"issues/4242.json": {"issue": REDMINE_ISSUE}}, Profile6x())
     parsed = _load(await connector.get_ticket(4242))
     assert parsed["id"] == 4242
     assert "Payee type must be configurable." in parsed["description"]
@@ -245,6 +255,8 @@ async def test_get_ticket_returns_description():
 
 @pytest.mark.asyncio
 async def test_get_ticket_not_found_returns_error():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     client = AsyncMock()
 
     def _raise(*args, **kwargs):
@@ -252,15 +264,16 @@ async def test_get_ticket_not_found_returns_error():
         raise httpx.HTTPStatusError("not found", request=request, response=httpx.Response(404, request=request))
 
     client.get.side_effect = _raise
-    connector = RedmineConnector(client=client)
+    connector = RedmineConnector(client=client, profile=Profile6x())
     parsed = _load(await connector.get_ticket(999999999))
     assert "error" in parsed
 
 
 @pytest.mark.asyncio
 async def test_get_ticket_comments_only_notes():
-    """Journals without notes (pure field changes) must not appear as comments."""
-    connector = _connector({"issues/4242.json": {"issue": REDMINE_ISSUE}})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({"issues/4242.json": {"issue": REDMINE_ISSUE}}, Profile6x())
     parsed = _load(await connector.get_ticket_comments(4242))
     assert parsed["ticket_id"] == 4242
     assert parsed["total"] == 2
@@ -270,76 +283,75 @@ async def test_get_ticket_comments_only_notes():
 @pytest.mark.asyncio
 async def test_get_ticket_comments_sends_include_journals():
     """The request must pass include=journals, else Redmine omits the journals."""
-    connector = _connector({"issues/4242.json": {"issue": REDMINE_ISSUE}})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({"issues/4242.json": {"issue": REDMINE_ISSUE}}, Profile6x())
     await connector.get_ticket_comments(4242)
     (call,) = [c for c in connector.client.get.call_args_list if c.args and c.args[0].startswith("issues/")]
     assert call.kwargs["params"] == {"include": ["journals"]}
 
 
 # ──────────────────────────────────────────────
-#  types / check / area paths
+#  types / check / area paths (profile-aware)
 # ──────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_get_ticket_types():
-    connector = _connector({"issue_types.json": REDMINE_TYPES})
-    parsed = _load(await connector.get_ticket_types())
-    assert parsed["total"] == 2
-    assert [t["name"] for t in parsed["ticket_types"]] == ["Task", "Bug"]
+async def test_check_reports_profile():
+    from mcp_ticketing.redmine.p6x import Profile6x
 
-
-@pytest.mark.asyncio
-async def test_check_ok():
-    connector = _connector({"my_account.json": REDMINE_ACCOUNT})
+    connector = _connector({"my_account.json": REDMINE_ACCOUNT}, Profile6x())
     parsed = _load(await connector.check())
     assert parsed["status"] == "ok"
     assert parsed["backend"] == "redmine"
     assert parsed["user"] == "Mario Rossi"
+    assert parsed["profile"] == "6.x"
 
 
 @pytest.mark.asyncio
-async def test_check_fallback_to_projects():
-    """Old Redmine has no my_account.json; check falls back to projects.json."""
-    connector = _connector({"projects.json": REDMINE_PROJECTS})
-    parsed = _load(await connector.check())
-    assert parsed["status"] == "ok"
-    assert parsed["backend"] == "redmine"
+async def test_get_ticket_types_uses_profile_endpoint():
+    from mcp_ticketing.redmine.p6x import Profile6x
+    from mcp_ticketing.redmine.p7x import Profile7x
+
+    # 6.x -> trackers.json
+    c6 = _connector({"trackers.json": REDMINE_TRACKERS}, Profile6x())
+    p6 = _load(await c6.get_ticket_types())
+    assert p6["total"] == 2
+    # 7.x -> issue_types.json
+    c7 = _connector({"issue_types.json": REDMINE_TYPES}, Profile7x())
+    p7 = _load(await c7.get_ticket_types())
+    assert p7["total"] == 2
 
 
 @pytest.mark.asyncio
-async def test_get_ticket_types_fallback_to_trackers():
-    """Old Redmine has no issue_types.json; falls back to trackers."""
-    connector = _connector({"trackers.json": REDMINE_TRACKERS})
-    parsed = _load(await connector.get_ticket_types())
-    assert parsed["total"] == 2
-    assert [t["name"] for t in parsed["ticket_types"]] == ["Task", "Bug"]
+async def test_get_area_paths_uses_profile_endpoint():
+    from mcp_ticketing.redmine.p6x import Profile6x
 
-
-@pytest.mark.asyncio
-async def test_get_area_paths_returns_trackers():
-    connector = _connector({"trackers.json": REDMINE_TRACKERS})
+    connector = _connector({"trackers.json": REDMINE_TRACKERS}, Profile6x())
     parsed = _load(await connector.get_area_paths())
     assert parsed["total"] == 2
     assert parsed["area_paths"][0]["name"] == "Task"
 
 
 # ──────────────────────────────────────────────
-#  create_ticket — payload building
+#  create_ticket — payload building (6.x -> tracker_id)
 # ──────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_create_ticket_payload():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     connector = _connector(
         {
             "projects.json": REDMINE_PROJECTS,
-            "issue_types.json": REDMINE_TYPES,
+            "trackers.json": REDMINE_TRACKERS,
             "users.json": REDMINE_USERS,
             "projects/3/versions.json": REDMINE_VERSIONS,
             "issues.json": REDMINE_PRIORITIES,
         },
-        post={"issue": {"id": 500, "issue_type": {"name": "Bug"}}},
+        Profile6x(),
+        post={"issue": {"id": 500, "tracker": {"name": "Bug"}}},
     )
 
     parsed = _load(
@@ -362,7 +374,7 @@ async def test_create_ticket_payload():
     issue = payload["issue"]
     assert issue["project_id"] == 3
     assert issue["subject"] == "New ticket"
-    assert issue["tracker_id"] == 2  # case-insensitive
+    assert issue["tracker_id"] == 2  # case-insensitive, 6.x field name
     assert issue["assigned_to_id"] == 7
     assert issue["priority_id"] == 2  # High
     assert issue["fixed_version_id"] == 9
@@ -371,7 +383,9 @@ async def test_create_ticket_payload():
 
 @pytest.mark.asyncio
 async def test_create_ticket_requires_title():
-    connector = _connector({})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({}, Profile6x())
     parsed = _load(await connector.create_ticket(ticket_type="Task"))
     assert "error" in parsed
     assert "title" in parsed["error"]
@@ -379,12 +393,14 @@ async def test_create_ticket_requires_title():
 
 @pytest.mark.asyncio
 async def test_create_ticket_unknown_type_errors():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     connector = _connector(
         {
             "projects.json": REDMINE_PROJECTS,
-            "issue_types.json": REDMINE_TYPES,
             "trackers.json": REDMINE_TRACKERS,
-        }
+        },
+        Profile6x(),
     )
     parsed = _load(await connector.create_ticket(ticket_type="Epic", title="x"))
     assert "error" in parsed
@@ -393,7 +409,9 @@ async def test_create_ticket_unknown_type_errors():
 
 @pytest.mark.asyncio
 async def test_create_ticket_unknown_assignee_errors():
-    connector = _connector({"projects.json": REDMINE_PROJECTS, "users.json": REDMINE_USERS})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({"projects.json": REDMINE_PROJECTS, "users.json": REDMINE_USERS}, Profile6x())
     parsed = _load(await connector.create_ticket(title="x", assigned_to="nobody"))
     assert "error" in parsed
     assert "nobody" in parsed["error"]
@@ -406,7 +424,9 @@ async def test_create_ticket_unknown_assignee_errors():
 
 @pytest.mark.asyncio
 async def test_update_ticket_no_fields():
-    connector = _connector({})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({}, Profile6x())
     parsed = _load(await connector.update_ticket(ticket_id=1))
     assert "error" in parsed
     assert "No fields to update" in parsed["error"]
@@ -414,12 +434,15 @@ async def test_update_ticket_no_fields():
 
 @pytest.mark.asyncio
 async def test_update_ticket_state_and_priority():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     connector = _connector(
         {
             "projects.json": REDMINE_PROJECTS,
             "issues_statuses.json": REDMINE_STATUSES,
             "issues.json": REDMINE_PRIORITIES,
         },
+        Profile6x(),
         put={"issue": {"id": 1}},
     )
     parsed = _load(await connector.update_ticket(ticket_id=1, state="closed", priority=1))
@@ -431,7 +454,9 @@ async def test_update_ticket_state_and_priority():
 
 @pytest.mark.asyncio
 async def test_update_ticket_direct_status_name():
-    connector = _connector({"issues_statuses.json": REDMINE_STATUSES}, put={"issue": {"id": 1}})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({"issues_statuses.json": REDMINE_STATUSES}, Profile6x(), put={"issue": {"id": 1}})
     parsed = _load(await connector.update_ticket(ticket_id=1, state="In progress"))
     assert parsed["success"] is True
     payload = connector.client.put.call_args.kwargs["data"]
@@ -440,7 +465,9 @@ async def test_update_ticket_direct_status_name():
 
 @pytest.mark.asyncio
 async def test_update_ticket_unknown_state_errors():
-    connector = _connector({"issues_statuses.json": REDMINE_STATUSES})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({"issues_statuses.json": REDMINE_STATUSES}, Profile6x())
     parsed = _load(await connector.update_ticket(ticket_id=1, state="bogus-state"))
     assert "error" in parsed
     assert "bogus-state" in parsed["error"]
@@ -453,14 +480,17 @@ async def test_update_ticket_unknown_state_errors():
 
 @pytest.mark.asyncio
 async def test_search_tickets_builds_filters():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     connector = _connector(
         {
             "projects.json": REDMINE_PROJECTS,
-            "issue_types.json": REDMINE_TYPES,
+            "trackers.json": REDMINE_TRACKERS,
             "issues_statuses.json": REDMINE_STATUSES,
             "users.json": REDMINE_USERS,
             "issues.json": {"issues": [], "total_count": 0},
-        }
+        },
+        Profile6x(),
     )
     parsed = _load(
         await connector.search_tickets(
@@ -484,11 +514,14 @@ async def test_search_tickets_builds_filters():
 
 @pytest.mark.asyncio
 async def test_search_tickets_omits_description():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     connector = _connector(
         {
             "projects.json": REDMINE_PROJECTS,
             "issues.json": {"issues": [REDMINE_ISSUE], "total_count": 1},
-        }
+        },
+        Profile6x(),
     )
     parsed = _load(await connector.search_tickets(query="payee"))
     assert parsed["total"] == 1
@@ -502,7 +535,9 @@ async def test_search_tickets_omits_description():
 
 @pytest.mark.asyncio
 async def test_link_tickets_relation_payload():
-    connector = _connector({}, put={})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({}, Profile6x(), put={})
     parsed = _load(await connector.link_tickets(1, 2, link_type="blocks", comment="wait"))
     assert parsed["success"] is True
     payload = connector.client.put.call_args.kwargs["data"]
@@ -512,18 +547,22 @@ async def test_link_tickets_relation_payload():
 
 @pytest.mark.asyncio
 async def test_link_tickets_unknown_type_errors():
-    connector = _connector({})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({}, Profile6x())
     parsed = _load(await connector.link_tickets(1, 2, link_type="nope"))
     assert "error" in parsed
 
 
 @pytest.mark.asyncio
 async def test_get_ticket_relations():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     issue = dict(REDMINE_ISSUE)
     issue["relations"] = [
         {"relation_type": 1, "delay": 0, "issue": {"id": 10, "subject": "Other"}},
     ]
-    connector = _connector({"issues/4242.json": {"issue": issue}})
+    connector = _connector({"issues/4242.json": {"issue": issue}}, Profile6x())
     parsed = _load(await connector.get_ticket_relations(4242))
     assert parsed["total"] == 1
     assert parsed["relations"][0]["target_id"] == 10
@@ -531,7 +570,11 @@ async def test_get_ticket_relations():
 
 @pytest.mark.asyncio
 async def test_get_iterations_maps_versions():
-    connector = _connector({"projects.json": REDMINE_PROJECTS, "projects/3/versions.json": REDMINE_VERSIONS})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector(
+        {"projects.json": REDMINE_PROJECTS, "projects/3/versions.json": REDMINE_VERSIONS}, Profile6x()
+    )
     parsed = _load(await connector.get_iterations())
     assert parsed["total"] == 2
     assert parsed["iterations"][0]["name"] == "v1.2"
@@ -539,8 +582,11 @@ async def test_get_iterations_maps_versions():
 
 @pytest.mark.asyncio
 async def test_move_to_iteration_payload():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     connector = _connector(
         {"projects.json": REDMINE_PROJECTS, "projects/3/versions.json": REDMINE_VERSIONS},
+        Profile6x(),
         put={},
     )
     parsed = _load(await connector.move_to_iteration(1, "v2.0"))
@@ -551,8 +597,11 @@ async def test_move_to_iteration_payload():
 
 @pytest.mark.asyncio
 async def test_move_to_iteration_unknown_version_errors():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     connector = _connector(
-        {"projects.json": REDMINE_PROJECTS, "projects/3/versions.json": REDMINE_VERSIONS}
+        {"projects.json": REDMINE_PROJECTS, "projects/3/versions.json": REDMINE_VERSIONS},
+        Profile6x(),
     )
     parsed = _load(await connector.move_to_iteration(1, "v9.9"))
     assert "error" in parsed
@@ -566,22 +615,30 @@ async def test_move_to_iteration_unknown_version_errors():
 
 @pytest.mark.asyncio
 async def test_tickets_needing_my_reply():
+    from mcp_ticketing.redmine.p6x import Profile6x
+
     connector = _connector(
         {
             "users.json": REDMINE_USERS,
             "projects.json": REDMINE_PROJECTS,
             "issues.json": {"issues": [REDMINE_ISSUE], "total_count": 1},
-        }
+        },
+        Profile6x(),
     )
     parsed = _load(await connector.get_tickets_needing_my_reply("Mario Rossi"))
     assert parsed["total"] == 1
     assert parsed["pending"][0]["ticket_id"] == 4242
     assert parsed["pending"][0]["last_comment_author"] == "Luigi Verdi"
+    # Regression: the request must request journals, else they are omitted.
+    (call,) = [c for c in connector.client.get.call_args_list if c.args and c.args[0] == "issues.json"]
+    assert call.kwargs["params"]["include"] == ["journals"]
 
 
 @pytest.mark.asyncio
 async def test_tickets_needing_my_reply_no_user():
-    connector = _connector({"users.json": REDMINE_USERS})
+    from mcp_ticketing.redmine.p6x import Profile6x
+
+    connector = _connector({"users.json": REDMINE_USERS}, Profile6x())
     parsed = _load(await connector.get_tickets_needing_my_reply("ghost"))
     assert parsed["pending"] == []
     assert "No user matching" in parsed["message"]

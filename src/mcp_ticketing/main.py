@@ -20,6 +20,7 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
+from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 
 if TYPE_CHECKING:
@@ -101,6 +102,20 @@ def _apply_cli_env(args: argparse.Namespace) -> None:
             os.environ[backend_map[flag]] = value
 
 
+async def _warmup_redmine_profile() -> None:
+    """Select the Redmine version profile at startup (fail-fast).
+
+    For the Redmine backend this probes the server once (reading
+    ``X-Redmine-Version``) or validates the declared ``MCP_REDMINE_VERSION``,
+    so an unsupported/mismatched version is reported *before* the MCP server
+    starts, not on the first tool call.
+    """
+    from mcp_ticketing.redmine.connector import RedmineConnector
+
+    connector = RedmineConnector()
+    await connector._ensure_profile()
+
+
 def _resolve(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse argv, apply the CLI environment overrides, and build the TicketManager."""
     global manager
@@ -109,9 +124,22 @@ def _resolve(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = _parse_args(list(argv))
     _apply_cli_env(args)
 
+    # Load .env from the composition root so the CLI overrides above take
+    # precedence (already pushed into the environment). The Redmine connector
+    # reads its configuration at construction time, not at import time.
+    load_dotenv()
+
     from mcp_ticketing.ticket_manager import TicketManager
 
     manager = TicketManager(strategy=args.backend)
+
+    if args.backend == "redmine":
+        try:
+            asyncio.run(_warmup_redmine_profile())
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"error": str(exc)}))
+            sys.exit(1)
+
     return args
 
 

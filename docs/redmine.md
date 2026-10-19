@@ -4,6 +4,32 @@
 
 The Redmine backend connects to the Redmine JSON REST API to manage issues.
 
+## Supported Versions
+
+**Redmine 4.2 – 7.x.** The connector uses a *version profile* (an inner
+strategy selected once at startup) to adapt to the API naming that changes
+between series:
+
+| Series | Status | Issue-type API |
+|--------|--------|----------------|
+| 4.2 – 4.x | supported | `trackers.json` / `tracker` / `tracker_id` |
+| 5.0 – 5.1 | supported (5.0 EOL, 5.1 legacy) | `trackers.json` / `tracker` / `tracker_id` |
+| 6.0 – 6.1 | supported (6.0 legacy-stable, 6.1 stable) | `trackers.json` / `tracker` / `tracker_id` |
+| 7.0+ | supported (stable) | `issue_types.json` / `issue_type` / `issue_type_id` |
+
+Everything else (auth, `issues_statuses.json`, `my_account.json`,
+per-project `versions.json`, free-text search) is identical across the range,
+so the connector never branches on the version at runtime.
+
+The version is **declared** with `MCP_REDMINE_VERSION` (e.g. `6.1`, `7.0`).
+At startup the connector reads the real version from the `X-Redmine-Version`
+response header (a single probe) and:
+
+* if declared, validates it — a mismatch raises `ProfileMismatchError`
+  (fail-fast, before the MCP server starts);
+* if empty, **auto-detects** it and selects the matching profile;
+* if the server is outside 4.2 – 7.x, raises `UnsupportedRedmineVersionError`.
+
 ## Credentials
 
 Set these environment variables:
@@ -14,6 +40,9 @@ MCP_REDMINE_PROJECT=your-project-identifier
 MCP_REDMINE_API_KEY=your-redmine-api-key
 # Optional: TLS verification
 MCP_REDMINE_VERIFY_SSL=
+# Optional: declare the Redmine version (e.g. 6.1, 7.0). Supported 4.2 – 7.x.
+# When empty it is auto-detected from the X-Redmine-Version header.
+MCP_REDMINE_VERSION=
 ```
 
 | Variable | Required | Description |
@@ -21,6 +50,7 @@ MCP_REDMINE_VERIFY_SSL=
 | `MCP_REDMINE_URL` | Yes | Redmine instance base URL (e.g. `https://redmine.example.com`) |
 | `MCP_REDMINE_PROJECT` | Yes | Project identifier or ID used as the default scope for tickets |
 | `MCP_REDMINE_API_KEY` | Yes | API key of the authenticated user |
+| `MCP_REDMINE_VERSION` | No | Declared Redmine version (e.g. `4.2`, `6.1`, `7.0`). Supported 4.2 – 7.x. When empty, auto-detected from the `X-Redmine-Version` header at startup |
 | `MCP_REDMINE_VERIFY_SSL` | No | `false`/`0` disables TLS verification (for self-signed or internal CA certs); a path to a CA bundle file; empty (default) uses the system CA bundle |
 
 ### API key
