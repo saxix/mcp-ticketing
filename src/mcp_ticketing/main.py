@@ -103,12 +103,14 @@ def _apply_cli_env(args: argparse.Namespace) -> None:
 
 
 async def _warmup_redmine_profile() -> None:
-    """Select the Redmine version profile at startup (fail-fast).
+    """Select the Redmine version profile at startup (fail-fast, no network).
 
-    For the Redmine backend this probes the server once (reading
-    ``X-Redmine-Version``) or validates the declared ``MCP_REDMINE_VERSION``,
-    so an unsupported/mismatched version is reported *before* the MCP server
-    starts, not on the first tool call.
+    For the Redmine backend this resolves ``MCP_REDMINE_VERSION`` to a
+    profile (latest profile when unset) so an invalid or unsupported
+    *declared* version is reported *before* the MCP server starts, not on
+    the first tool call. No server round-trip is performed: deployments
+    that do not expose the version (no ``X-Redmine-Version`` header) are
+    the rule, so the operator declares it.
     """
     from mcp_ticketing.redmine.connector import RedmineConnector
 

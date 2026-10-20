@@ -51,16 +51,16 @@ AzureConnector  GithubConnector  RedmineConnector
 - `github_connector.py` — `GithubConnector(TicketProtocol)` + `GitHubClient` HTTP wrapper
 - `redmine/` — package:
   - `client.py` — `RedmineClient` httpx wrapper (version-agnostic transport)
-  - `profile.py` — `RedmineVersionProfile` ABC + `RedmineCapabilities` + version errors + `parse_version`
-  - `base.py` — `RedmineBaseProfile`: the invariant rules (auth, `issues_statuses.json`, `my_account.json`, per-project `versions.json`, `subject=~term`, 204) + the shared text helpers (`strip_wiki`, `markdown_to_html`, `render_mermaid_png`, field aliases, priority synonyms)
+  - `profile.py` — `RedmineVersionProfile` ABC + version errors + `parse_version`
+  - `base.py` — `RedmineBaseProfile`: the invariant rules (auth, `issues_statuses.json`, per-project `versions.json`, `subject=~term`, 204) + the shared text helpers (`strip_wiki`, `markdown_to_html`, `render_mermaid_png`, field aliases, priority synonyms)
   - `p42.py` / `p51.py` / `p6x.py` / `p7x.py` — the four profiles; each overrides only `supports()` and the issue-type endpoint/field name (legacy `trackers` for 4.2–6.x, `issue_types` for 7.x)
-  - `registry.py` — `VERSION_PROFILES` + `select_profile(declared)`
+  - `registry.py` — `VERSION_PROFILES` (the list of supported majors, oldest to newest) + `select_profile(declared)`
   - `discovery.py` — per-instance priority discovery (single page of issues, matched by name)
   - `connector.py` — `RedmineConnector(TicketProtocol)`; delegates every version-dependent choice to the active profile
 - `ticket_manager.py` — `TicketManager(TicketProtocol)`; accepts a backend name (`'azure'`/`'github'`/`'redmine'`, resolved via the `BACKENDS` registry) or a `TicketProtocol` instance; delegates every call to the strategy
-- `main.py` — composition root: parses CLI args (`<backend>` positional, `--check`, `--owner/--repo/--token` overrides), loads `.env`, builds `manager = TicketManager(strategy=<backend>)`, **warms up the Redmine profile** (fail-fast on unsupported/mismatched version) before registering the 15 tools; `--check` runs a connectivity check and exits instead of starting the MCP server
+- `main.py` — composition root: parses CLI args (`<backend>` positional, `--check`, `--owner/--repo/--token` overrides), loads `.env`, builds `manager = TicketManager(strategy=<backend>)`, **warms up the Redmine profile** (fail-fast on an invalid/unsupported declared version, no network) before registering the 15 tools; `--check` runs a connectivity check and exits instead of starting the MCP server
 
-**Redmine version selection.** `MCP_REDMINE_VERSION` (e.g. `4.2`, `6.1`, `7.0`) declares the server version; the connector validates it against the real server (single probe of the `X-Redmine-Version` header) and raises `ProfileMismatchError` at startup on a mismatch. When empty, the version is **auto-detected** from that same single probe and the matching profile is selected (`UnsupportedRedmineVersionError` if the server is outside 4.2 – 7.x).
+**Redmine version selection.** `MCP_REDMINE_VERSION` (e.g. `4.2`, `6.1`, `7.0`) **declares** the server version; the connector selects the matching profile from it. There is **no version probe**: the `X-Redmine-Version` header is not reliably sent by all deployments (e.g. it is absent on the 4.x instance we run against), so the operator — who knows their product version — declares it. When the variable is empty the **latest** profile in the registry (7.x) is used. The supported majors are listed in `docs/redmine.md` (a test keeps that table in sync with `VERSION_PROFILES`); a declared version outside the list raises `UnsupportedRedmineVersionError` at startup (fail-fast).
 
 To add a new backend: implement a new `XxxConnector(TicketProtocol)`, register it in `BACKENDS` in `ticket_manager.py`, and add its namespace/class to the registry. To add a new Redmine major series: add a `ProfileNN` subclass in `redmine/` and append it to `VERSION_PROFILES` in `redmine/registry.py`.
 
@@ -79,7 +79,7 @@ Required env vars (load via `.env` or direnv):
 | `MCP_REDMINE_URL` | Redmine instance base URL (e.g. https://redmine.example.com) |
 | `MCP_REDMINE_PROJECT` | Redmine project identifier or ID (default scope) |
 | `MCP_REDMINE_API_KEY` | Redmine API key (from the user profile page) |
-| `MCP_REDMINE_VERSION` | (optional) Redmine version (e.g. `4.2`, `6.1`, `7.0`). Supported 4.2 – 7.x. When empty it is auto-detected from the `X-Redmine-Version` header at startup |
+| `MCP_REDMINE_VERSION` | (optional) Declared Redmine version (e.g. `4.2`, `6.1`, `7.0`). Supported 4.2 – 7.x (majors listed in `docs/redmine.md`). When empty the latest profile (7.x) is used. No auto-detection: declare your server version |
 | `MCP_REDMINE_VERIFY_SSL` | (optional) `false` to disable TLS verification; a path to a CA bundle; empty for default |
 
 ## Code Conventions

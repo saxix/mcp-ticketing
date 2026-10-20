@@ -3,16 +3,16 @@
 Redmine's JSON REST API is stable across the supported range (4.2 – 7.x)
 *except* for a few endpoint/field renames. Instead of probing at runtime
 with try/except-404 fallbacks, the connector selects a
-:class:`RedmineVersionProfile` **once at startup** — either from the
-declared ``MCP_REDMINE_VERSION`` or from a single probe that reads the
-``X-Redmine-Version`` response header — and then every operation asks the
-profile *which* endpoint / field name to use. No ifs, no attempts.
+:class:`RedmineVersionProfile` **once at startup** from the declared
+``MCP_REDMINE_VERSION`` — or, when that variable is empty, from the
+*latest* profile in the registry — and then every operation asks the
+profile *which* endpoint / field name to use. No ifs, no attempts, no
+server round-trip for version detection: the operator knows the product
+version and declares it (see ``docs/redmine.md`` for the supported majors).
 
 Each profile declares:
 
 * :meth:`supports` — the version range it covers (used by selection);
-* :meth:`probe` — one request that yields a :class:`RedmineCapabilities`
-  snapshot (used both for auto-detect and for the mismatch check);
 * the *varying* rules (issue-type endpoint + field names);
 * the *invariant* rules, inherited from
   :class:`~mcp_ticketing.redmine.base.RedmineBaseProfile` (auth, statuses,
@@ -21,7 +21,6 @@ Each profile declares:
 
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 
 SUPPORTED_MIN = (4, 2)
 SUPPORTED_MAX = (7, 99)  # 7.x is open-ended
@@ -32,26 +31,7 @@ class RedmineVersionError(Exception):
 
 
 class UnsupportedRedmineVersionError(RedmineVersionError):
-    """The server version is outside the supported 4.2 – 7.x range."""
-
-
-class ProfileMismatchError(RedmineVersionError):
-    """The declared ``MCP_REDMINE_VERSION`` does not match the server version."""
-
-
-@dataclass(frozen=True)
-class RedmineCapabilities:
-    """A snapshot of the server's API surface, deduced at startup.
-
-    ``version`` is the ``(major, minor)`` tuple read from the
-    ``X-Redmine-Version`` response header.
-    """
-
-    version: tuple[int, int]
-    has_issue_types: bool
-    has_statuses_endpoint: bool
-    has_my_account: bool
-    has_global_versions: bool
+    """A declared ``MCP_REDMINE_VERSION`` is not in the supported list."""
 
 
 def parse_version(raw: str) -> tuple[int, int]:
@@ -89,16 +69,6 @@ class RedmineVersionProfile(ABC):
     def supports(self, version: tuple[int, int]) -> bool:
         """Return True when this profile covers ``version``."""
 
-    # ── startup probe ──────────────────────────────────────────
-    @abstractmethod
-    async def probe(self, client: "object") -> RedmineCapabilities:
-        """One request: read ``X-Redmine-Version`` and build a capabilities snapshot.
-
-        The client is typed loosely (``object``) to avoid an import cycle with
-        :mod:`mcp_ticketing.redmine.client`; it is expected to expose
-        ``get_with_headers(path, params) -> (body, headers)``.
-        """
-
     # ── rules that vary between profiles ───────────────────────
     @abstractmethod
     def issue_type_endpoint(self) -> str:
@@ -119,9 +89,6 @@ class RedmineVersionProfile(ABC):
     # ── rules invariant across the range (defaults in base.py) ─
     def status_endpoint(self) -> str:
         return "issues_statuses.json"
-
-    def check_user_endpoint(self) -> str:
-        return "my_account.json"
 
     def list_versions_path(self, project_id: int | str) -> str:
         return f"projects/{project_id}/versions.json"

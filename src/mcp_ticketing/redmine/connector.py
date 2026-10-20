@@ -3,10 +3,12 @@
 Supports Redmine 4.2 through 7.x. The version-specific parts (issue-type
 endpoint and field names) are delegated to a
 :class:`~mcp_ticketing.redmine.profile.RedmineVersionProfile` selected **once
-at startup** — either from the declared ``MCP_REDMINE_VERSION`` or from a
-single probe that reads the ``X-Redmine-Version`` response header. There are
-no runtime try/except-404 attempts: the profile decides the endpoint, and a
-declared-vs-server mismatch fails fast at startup.
+at startup** from the declared ``MCP_REDMINE_VERSION`` — or, when that
+variable is empty, from the *latest* profile in the registry. There are no
+runtime try/except-404 attempts and no version probe: the profile decides
+the endpoint, and an unsupported *declared* version fails fast at startup.
+The operator is expected to know and declare their server version (the
+supported majors are listed in ``docs/redmine.md``).
 
 Configuration comes from the environment: ``MCP_REDMINE_URL``,
 ``MCP_REDMINE_API_KEY``, ``MCP_REDMINE_PROJECT`` and the optional
@@ -34,17 +36,8 @@ from mcp_ticketing.redmine.base import (
 )
 from mcp_ticketing.redmine.client import RedmineClient
 from mcp_ticketing.redmine.discovery import discover_priorities, resolve_priority_id
-from mcp_ticketing.redmine.profile import (
-    ProfileMismatchError,
-    RedmineCapabilities,
-    RedmineVersionProfile,
-    UnsupportedRedmineVersionError,
-    is_supported,
-    parse_version,
-)
-
-# RedmineCapabilities is used as the return type of _probe_version.
-from mcp_ticketing.redmine.registry import VERSION_PROFILES, select_profile
+from mcp_ticketing.redmine.profile import RedmineVersionProfile
+from mcp_ticketing.redmine.registry import select_profile
 
 logger = logging.getLogger("mcp-ticketing-redmine")
 
@@ -94,7 +87,6 @@ class RedmineConnector(TicketProtocol):
     def __init__(self, client: RedmineClient | None = None, profile: RedmineVersionProfile | None = None):
         self.client = client or RedmineClient()
         self._profile = profile
-        self._last_version: tuple[int, int] | None = None
         self._project: dict | None = None
         self._statuses: list[dict] | None = None
         self._priorities: list[dict] | None = None
@@ -104,34 +96,31 @@ class RedmineConnector(TicketProtocol):
     #  PROFILE / STARTUP
     # ──────────────────────────────────────────────
 
-    def _version_str(self) -> str:
-        return f"{self._last_version[0]}.{self._last_version[1]}" if self._last_version else "unknown"
-
     async def _ensure_profile(self) -> RedmineVersionProfile:
-        """Select (and cache) the active version profile, probing once if needed."""
+        """Select (and cache) the active version profile.
+
+        Selection happens **once**, without any server round-trip:
+
+        * ``MCP_REDMINE_VERSION`` set -> the profile for that version
+          (``select_profile`` raises on an invalid or unsupported version,
+          failing fast at startup);
+        * ``MCP_REDMINE_VERSION`` empty -> the **latest** profile in the
+          registry (newest API surface as default).
+
+        The operator is expected to know and declare their server version;
+        deployments that do not expose it (no ``X-Redmine-Version`` header)
+        are the rule, not the exception, so no probe is attempted.
+        """
         if self._profile_ready and self._profile is not None:
             return self._profile
 
         declared = os.getenv("MCP_REDMINE_VERSION", "").strip()
-        declared_version = parse_version(declared) if declared else None
         profile = self._profile if self._profile is not None else select_profile(declared or None)
-
-        if profile is None:
-            # Auto-detect: a single probe, then pick the matching profile.
-            caps = await _probe_version(self.client)
-            self._last_version = caps.version or None
-            profile = _profile_for_version(caps.version)
-            logger.info("Redmine %s auto-detected -> profile %s", self._version_str(), profile.name)
-        else:
-            # Declared (or explicitly provided): probe to validate the server.
-            caps = await _probe_version(self.client)
-            self._last_version = caps.version or None
-            if declared_version is not None and caps.version and not profile.supports(caps.version):
-                raise ProfileMismatchError(
-                    f"MCP_REDMINE_VERSION={declared} but server is {self._version_str()} "
-                    f"(profile {profile.name} does not cover it)."
-                )
-            logger.info("Redmine profile: %s (server %s)", profile.name, self._version_str())
+        logger.info(
+            "Redmine profile: %s (declared MCP_REDMINE_VERSION=%s)",
+            profile.name,
+            declared or "(not set, using latest)",
+        )
 
         self._profile = profile
         self._profile_ready = True
@@ -350,28 +339,22 @@ class RedmineConnector(TicketProtocol):
     async def check(self) -> str:
         """Verify the connection to Redmine.
 
-        Ensures the profile is selected (probing the server) and reports the
-        authenticated user. If ``my_account.json`` is unavailable (404 on
-        restricted deployments), falls back to confirming connectivity via
-        ``projects.json``.
+        Ensures the profile is selected (from the declared version, no
+        server probe) and confirms connectivity via ``projects.json`` —
+        the single endpoint that is available on every supported version,
+        including 4.x deployments where ``my_account.json`` is restricted
+        or absent. The authenticated user is *not* read: ``my_account.json``
+        is not relied upon anywhere in this backend.
         """
         try:
             profile = await self._ensure_profile()
-            user: dict = {}
-            try:
-                data = await self.client.get(profile.check_user_endpoint())
-                user = data.get("user", {})
-            except httpx.HTTPStatusError:
-                # my_account.json may 404 for non-admin or restricted users;
-                # fall back to projects.json to confirm connectivity.
-                await self.client.get("projects.json")
+            await self.client.get("projects.json")
             return json.dumps(
                 {
                     "status": "ok",
                     "backend": "redmine",
                     "url": self.client.base_url,
                     "project": self.client.project,
-                    "user": user.get("name", user.get("login", "unknown")),
                     "profile": profile.name,
                     "message": f"Connection to Redmine {self.client.base_url} OK.",
                 },
@@ -1028,61 +1011,3 @@ class RedmineConnector(TicketProtocol):
             return json.dumps({"area_paths": result, "total": len(result)}, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
             return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text}"})
-
-
-# ──────────────────────────────────────────────
-#  Module-level startup helpers (single probe)
-# ──────────────────────────────────────────────
-
-
-async def _probe_version(client: RedmineClient) -> RedmineCapabilities:
-    """Single probe: read ``X-Redmine-Version`` and build a capabilities snapshot.
-
-    Uses ``projects.json`` as the probe endpoint because it is available on
-    all supported Redmine versions and does not require special permissions
-    (unlike ``my_account.json``, which requires admin or self-access and may
-    404 on restricted deployments).
-
-    When the ``X-Redmine-Version`` header is absent (some builds strip it),
-    the version defaults to ``(0, 0)`` and the caller falls back to the
-    legacy profile (4.x) rather than failing.
-
-    Raises :class:`UnsupportedRedmineVersionError` only when the header is
-    present AND the version is outside the supported 4.2 – 7.x range.
-    """
-    _body, headers = await client.get_with_headers("projects.json")
-    raw = (headers.get("X-Redmine-Version") or headers.get("x-redmine-version") or "").strip()
-    version = parse_version(raw) if raw else (0, 0)
-    # Only raise when we actually detected a version AND it's out of range.
-    # (0, 0) means "unknown" — the caller will use the legacy profile.
-    if version and version != (0, 0) and not is_supported(version):
-        raise UnsupportedRedmineVersionError(
-            f"Unsupported Redmine version {version[0]}.{version[1]} (supported range 4.2 – 7.x)."
-        )
-    major = version[0] if version else 0
-    return RedmineCapabilities(
-        version=version,
-        has_issue_types=major >= 7,
-        has_statuses_endpoint=True,
-        has_my_account=version != (0, 0),
-        has_global_versions=major >= 7,
-    )
-
-
-def _profile_for_version(version: tuple[int, int]) -> RedmineVersionProfile:
-    """Return the profile covering ``version``.
-
-    When the version is unknown ``(0, 0)`` (no ``X-Redmine-Version`` header),
-    falls back to the **legacy** profile (4.x) because it uses the most
-    conservative endpoint naming (``trackers.json``) which is also valid on
-    newer Redmine versions (they still expose ``trackers.json`` as an alias).
-    """
-    if version == (0, 0):
-        # Unknown version: use the legacy profile (trackers) which is the
-        # safest default — newer Redmine still serves trackers.json.
-        return VERSION_PROFILES[0]()
-    for cls in VERSION_PROFILES:
-        candidate = cls()
-        if candidate.supports(version):
-            return candidate
-    return VERSION_PROFILES[0]()

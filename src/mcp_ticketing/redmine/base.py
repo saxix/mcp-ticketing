@@ -12,16 +12,8 @@ from __future__ import annotations
 
 import html
 import re
-from abc import abstractmethod
 
-from mcp_ticketing.redmine.profile import (
-    RedmineCapabilities,
-    RedmineVersionError,
-    RedmineVersionProfile,
-    UnsupportedRedmineVersionError,
-    is_supported,
-    parse_version,
-)
+from mcp_ticketing.redmine.profile import RedmineVersionProfile
 
 # ──────────────────────────────────────────────
 #  Field aliases (new Redmine 7.x vs 4.2 – 6.x)
@@ -180,48 +172,6 @@ class RedmineBaseProfile(RedmineVersionProfile):
         # profile declares), not from the probed server version — the version
         # is validated against ``supports()`` by the connector at startup.
         self._has_issue_types = has_issue_types
-
-    # ── selection ──────────────────────────────────────────────
-    @abstractmethod
-    def supports(self, version: tuple[int, int]) -> bool:
-        """Return True when this profile covers ``version``."""
-
-    # ── startup probe ──────────────────────────────────────────
-    async def probe(self, client: object) -> RedmineCapabilities:
-        """One request: read ``X-Redmine-Version`` and snapshot the capabilities.
-
-        Uses ``projects.json`` as the probe endpoint (available on all
-        supported versions, no special permissions required). The capability
-        flags are derived from this profile's declared range, not from
-        probing each endpoint individually.
-
-        If the ``X-Redmine-Version`` header is absent, the version defaults
-        to ``(0, 0)`` and the caller falls back to the legacy profile.
-
-        Raises :class:`UnsupportedRedmineVersionError` only when the header
-        is present AND the version is outside the supported 4.2 – 7.x range.
-        """
-        _body, headers = await client.get_with_headers("projects.json")  # type: ignore[attr-defined]
-        raw_version = (headers.get("X-Redmine-Version") or headers.get("x-redmine-version") or "").strip()
-        version = (0, 0)
-        if raw_version:
-            try:
-                version = parse_version(raw_version)
-            except RedmineVersionError:
-                version = (0, 0)
-
-        if version and version != (0, 0) and not is_supported(version):
-            raise UnsupportedRedmineVersionError(
-                f"Unsupported Redmine version {version[0]}.{version[1]} (supported range 4.2 – 7.x)."
-            )
-
-        return RedmineCapabilities(
-            version=version,
-            has_issue_types=self._has_issue_types,
-            has_statuses_endpoint=True,  # issues_statuses.json exists across 4.2 – 7.x
-            has_my_account=version != (0, 0),
-            has_global_versions=self._has_issue_types,
-        )
 
     # ── auth ───────────────────────────────────────────────────
     def headers(self, client: object) -> dict[str, str]:

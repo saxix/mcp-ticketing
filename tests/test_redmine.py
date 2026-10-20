@@ -65,7 +65,6 @@ REDMINE_STATUSES = {
 }
 REDMINE_USERS = {"users": [{"id": 7, "login": "mario", "name": "Mario Rossi"}]}
 REDMINE_VERSIONS = {"versions": [{"id": 9, "name": "v1.2"}, {"id": 10, "name": "v2.0"}]}
-REDMINE_ACCOUNT = {"user": {"id": 7, "login": "mario", "name": "Mario Rossi"}}
 # Priorities on the 1-4 scale, so the protocol scale maps 1:1 to ids.
 REDMINE_PRIORITIES = {
     "issues": [
@@ -95,9 +94,9 @@ BASE_KEYS = {
 def _redmine_env(monkeypatch):
     """Point the Redmine connector at a fake instance for offline tests.
 
-    ``MCP_REDMINE_VERSION`` is unset so the connector would auto-detect; the
-    per-test connector is always built with an explicit profile (see
-    ``_connector``), which skips the probe.
+    ``MCP_REDMINE_VERSION`` is unset (latest-profile path); the per-test
+    connector is always built with an explicit profile (see
+    ``_connector``), which skips the selection step.
     """
     monkeypatch.setenv("MCP_REDMINE_URL", "http://redmine.test")
     monkeypatch.setenv("MCP_REDMINE_API_KEY", "test-key")
@@ -111,8 +110,7 @@ def _make_client(responses: dict, post=None, put=None, base_url: str = "http://r
 
     ``responses`` maps a path (or path prefix) to the JSON the GET should
     return. Unknown paths raise a 404 ``HTTPStatusError``. The mock also
-    exposes ``get_with_headers`` (the version probe) and the client attributes
-    the connector reads.
+    exposes the client attributes the connector reads.
     """
     client = AsyncMock()
     client.base_url = base_url
@@ -131,12 +129,7 @@ def _make_client(responses: dict, post=None, put=None, base_url: str = "http://r
             response=resp,
         )
 
-    async def _get_with_headers(path: str, *args, **kwargs):
-        body = await _get(path, *args, **kwargs)
-        return body, {}
-
     client.get.side_effect = _get
-    client.get_with_headers.side_effect = _get_with_headers
     if post is not None:
         client.post = AsyncMock(return_value=post)
     if put is not None:
@@ -300,12 +293,14 @@ async def test_get_ticket_comments_sends_include_journals():
 async def test_check_reports_profile():
     from mcp_ticketing.redmine.p6x import Profile6x
 
-    connector = _connector({"my_account.json": REDMINE_ACCOUNT}, Profile6x())
+    # check() confirms connectivity via projects.json only (never
+    # my_account.json, which is restricted on some 4.x deployments).
+    connector = _connector({"projects.json": {"projects": []}}, Profile6x())
     parsed = _load(await connector.check())
     assert parsed["status"] == "ok"
     assert parsed["backend"] == "redmine"
-    assert parsed["user"] == "Mario Rossi"
     assert parsed["profile"] == "6.x"
+    assert "user" not in parsed
 
 
 @pytest.mark.asyncio
