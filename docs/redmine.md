@@ -8,27 +8,44 @@ The Redmine backend connects to the Redmine JSON REST API to manage issues.
 
 **Redmine 4.2 – 7.x.** The connector uses a *version profile* (an inner
 strategy selected once at startup) to adapt to the API naming that changes
-between series:
+between series. **This table is the list of supported majors** — declare
+your server version with `MCP_REDMINE_VERSION` (a value from the "Version"
+column below, e.g. `4.2`, `6.1`, `7.0`):
 
-| Series | Status | Issue-type API |
-|--------|--------|----------------|
-| 4.2 – 4.x | supported | `trackers.json` / `tracker` / `tracker_id` |
-| 5.0 – 5.1 | supported (5.0 EOL, 5.1 legacy) | `trackers.json` / `tracker` / `tracker_id` |
-| 6.0 – 6.1 | supported (6.0 legacy-stable, 6.1 stable) | `trackers.json` / `tracker` / `tracker_id` |
-| 7.0+ | supported (stable) | `issue_types.json` / `issue_type` / `issue_type_id` |
+| Major | Version | Status | Issue-type API |
+|-------|---------|--------|----------------|
+| 4.x | `4.2` – `4.9` | supported | `trackers.json` / `tracker` / `tracker_id` |
+| 5.x | `5.0` – `5.1` | supported (5.0 EOL, 5.1 legacy) | `trackers.json` / `tracker` / `tracker_id` |
+| 6.x | `6.0` – `6.1` | supported (6.0 legacy-stable, 6.1 stable) | `trackers.json` / `tracker` / `tracker_id` |
+| 7.x | `7.0`+ | supported (stable) | `issue_types.json` / `issue_type` / `issue_type_id` |
 
-Everything else (auth, `issues_statuses.json`, `my_account.json`,
+Everything else (auth, `issues_statuses.json`,
 per-project `versions.json`, free-text search) is identical across the range,
-so the connector never branches on the version at runtime.
+so the connector never branches on the version at runtime. Note that
+`my_account.json` is deliberately **not** used: it is restricted or absent on
+some 4.x deployments (including ours), so connectivity is checked against
+`projects.json`, which is available everywhere.
 
-The version is **declared** with `MCP_REDMINE_VERSION` (e.g. `6.1`, `7.0`).
-At startup the connector reads the real version from the `X-Redmine-Version`
-response header (a single probe) and:
+### Version selection (declared, not detected)
 
-* if declared, validates it — a mismatch raises `ProfileMismatchError`
-  (fail-fast, before the MCP server starts);
-* if empty, **auto-detects** it and selects the matching profile;
-* if the server is outside 4.2 – 7.x, raises `UnsupportedRedmineVersionError`.
+The version is **declared** with `MCP_REDMINE_VERSION`; the connector never
+probes the server for it:
+
+* **declared** (e.g. `4.2`) -> the profile for that major is used and every
+  API call goes through that version's interface. An invalid or unsupported
+  value (e.g. `3.4`, `8.0`) fails fast at startup with
+  `UnsupportedRedmineVersionError`, before the MCP server starts.
+* **empty / unset** -> the **latest** profile (`7.x`) is used as the default.
+
+> **Why no auto-detection?** The `X-Redmine-Version` response header is not
+> sent by all deployments (e.g. several 4.x builds behind a proxy), and
+> `my_account.json` can be restricted. Detecting the version is therefore
+> unreliable — and unnecessary: the operator of a Redmine instance knows the
+> product version, so they declare it.
+
+When adding a new major, update **both** this table and `VERSION_PROFILES`
+in `src/mcp_ticketing/redmine/registry.py` — `tests/test_redmine_profile.py`
+keeps the two in sync.
 
 ## Credentials
 
@@ -40,8 +57,9 @@ MCP_REDMINE_PROJECT=your-project-identifier
 MCP_REDMINE_API_KEY=your-redmine-api-key
 # Optional: TLS verification
 MCP_REDMINE_VERIFY_SSL=
-# Optional: declare the Redmine version (e.g. 6.1, 7.0). Supported 4.2 – 7.x.
-# When empty it is auto-detected from the X-Redmine-Version header.
+# Optional: declare the Redmine version (e.g. 4.2, 6.1, 7.0). Supported majors:
+# 4.x, 5.x, 6.x, 7.x (see the "Supported Versions" table above).
+# When empty, the latest profile (7.x) is used.
 MCP_REDMINE_VERSION=
 ```
 
@@ -50,7 +68,7 @@ MCP_REDMINE_VERSION=
 | `MCP_REDMINE_URL` | Yes | Redmine instance base URL (e.g. `https://redmine.example.com`) |
 | `MCP_REDMINE_PROJECT` | Yes | Project identifier or ID used as the default scope for tickets |
 | `MCP_REDMINE_API_KEY` | Yes | API key of the authenticated user |
-| `MCP_REDMINE_VERSION` | No | Declared Redmine version (e.g. `4.2`, `6.1`, `7.0`). Supported 4.2 – 7.x. When empty, auto-detected from the `X-Redmine-Version` header at startup |
+| `MCP_REDMINE_VERSION` | No | Declared Redmine version (e.g. `4.2`, `6.1`, `7.0`). Supported majors: 4.x, 5.x, 6.x, 7.x. When empty, the latest profile (7.x) is used. Never auto-detected |
 | `MCP_REDMINE_VERIFY_SSL` | No | `false`/`0` disables TLS verification (for self-signed or internal CA certs); a path to a CA bundle file; empty (default) uses the system CA bundle |
 
 ### API key
@@ -74,7 +92,7 @@ used as the default scope for `search_tickets`, `get_iterations` and
 | Tool | Redmine API |
 |------|-------------|
 | `get_ticket_types` | `GET issue_types.json` |
-| `check` | `GET my_account.json` |
+| `check` | `GET projects.json` |
 | `get_ticket` | `GET issues/{id}.json` |
 | `get_ticket_comments` | `GET issues/{id}.json` (journal notes) |
 | `add_comment` | `PUT issues/{id}.json` (`issue[notes]`) |

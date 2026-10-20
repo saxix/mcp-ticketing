@@ -92,18 +92,3 @@ class RedmineClient:
             if response.status_code == 204 or not response.content:
                 return {}
             return response.json()
-
-    async def get_with_headers(self, path: str, params: dict | None = None) -> tuple[Any, dict[str, str]]:
-        """Like :meth:`get` but also returns the response headers.
-
-        Used by the version probe to read ``X-Redmine-Version``.
-        """
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        async with self.get_client() as client:
-            response = await client.get(url, headers=self._headers(), params=params or {})
-            response.raise_for_status()
-            try:
-                body = response.json()
-            except Exception:  # noqa: BLE001 - some endpoints may return empty body
-                body = {}
-            return body, dict(response.headers)

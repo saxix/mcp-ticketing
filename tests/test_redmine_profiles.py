@@ -57,11 +57,7 @@ def _make_client(responses: dict, post=None, put=None, base_url: str = "http://r
             f"404 for {path}", request=httpx.Request("GET", f"{base_url}/{path}"), response=resp
         )
 
-    async def _get_with_headers(path: str, *args, **kwargs):
-        return await _get(path, *args, **kwargs), {}
-
     client.get.side_effect = _get
-    client.get_with_headers.side_effect = _get_with_headers
     if post is not None:
         client.post = AsyncMock(return_value=post)
     if put is not None:
