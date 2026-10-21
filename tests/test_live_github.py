@@ -7,6 +7,7 @@ from mcp_ticketing.github_connector import GithubConnector
 from mcp_ticketing.ticket_manager import TicketManager
 
 pytestmark = [
+    pytest.mark.live,
     pytest.mark.asyncio,
     pytest.mark.skipif(
         not all(os.getenv(v, "") for v in ["MCP_GITHUB_OWNER", "MCP_GITHUB_REPO", "MCP_GITHUB_TOKEN"]),

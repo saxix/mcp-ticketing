@@ -13,3 +13,6 @@ wheels/
 !.pre-commit-config.yaml
 # Documentation build output
 site/
+# Coverage
+coverage.xml
+htmlcov/

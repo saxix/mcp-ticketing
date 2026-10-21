@@ -8,11 +8,12 @@ and that it renders to valid HTML.
 
 import json
 import os
+import sys
 from unittest.mock import AsyncMock
 
 import pytest
 
-from mcp_ticketing.azure_connector import API_VERSION, AzureConnector
+from mcp_ticketing.azure_connector import API_VERSION, AzureConnector, _markdown_to_html
 from mcp_ticketing.github_connector import GithubConnector
 from mcp_ticketing.ticket_manager import TicketManager
 
@@ -488,6 +489,7 @@ def _e2e_check(resp: str) -> dict:
     return parsed
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     not all(os.getenv(v, "") for v in ["MCP_AZURE_DEVOPS_ORG", "MCP_AZURE_DEVOPS_PROJECT", "MCP_AZDO_PAT"]),
@@ -555,6 +557,7 @@ async def test_e2e_azure_markdown_description_and_comment():
                 pass  # noqa: S110
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     not all(os.getenv(v, "") for v in ["MCP_GITHUB_OWNER", "MCP_GITHUB_REPO", "MCP_GITHUB_TOKEN"]),
@@ -611,3 +614,22 @@ async def test_e2e_github_markdown_description_and_comment():
                 await manager.update_ticket(ticket_id=tid, state="closed")
             except Exception:  # noqa: BLE001
                 pass  # noqa: S110
+
+
+# ---------------------------------------------------------------------------
+# Markdown → HTML helper
+# ---------------------------------------------------------------------------
+
+
+def test_markdown_to_html_empty():
+    assert _markdown_to_html("") == ""
+
+
+def test_markdown_to_html_passes_plain_html_through():
+    html = "<p>already html</p>"
+    assert _markdown_to_html(html) == html
+
+
+def test_markdown_to_html_falls_back_without_library(monkeypatch):
+    monkeypatch.setitem(sys.modules, "markdown", None)
+    assert _markdown_to_html("**bold**") == "**bold**"

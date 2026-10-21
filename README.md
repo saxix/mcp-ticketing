@@ -369,11 +369,38 @@ Response:
 
 ## Testing
 
+Three tiers, all driven by `tox`:
+
+| Command | Scope | Network / Docker |
+|---------|-------|------------------|
+| `tox -e test` (default) | unit tests + `respx`-mocked contract tests, with coverage | none |
+| `tox -e integration` | stateful fake servers via docker-compose | Docker |
+| `tox -e coverage` | combined coverage of both tiers above | Docker |
+| `tox -e test-live` | real Azure DevOps / GitHub APIs | real credentials |
+
+Directly with pytest:
+
 ```bash
-uv run pytest tests/ -v
+uv run pytest tests/ -v              # same as tox -e test
+uv run pytest tests/ -m live -v      # live tests (requires .envrc)
+uv run pytest tests/ -m integration  # requires the fake server (see below)
+
+# fake servers, stateful, in-memory
+docker compose -f tests/docker/docker-compose.yml up -d --build --wait
+docker compose -f tests/docker/docker-compose.yml down -v
 ```
 
-Tests are integration tests that call real APIs. They skip automatically when the corresponding environment variables are not set.
+The default run excludes `live` and `integration` tests. Live tests skip when the
+corresponding environment variables are not set. Integration tests skip when the
+fake server is not reachable.
+
+Coverage is measured by `pytest-cov`: `tox -e test` prints the report, writes
+`coverage.xml`, and enforces a 95% minimum; `tox -e coverage` combines the unit
+and integration runs and enforces 95%.
+
+Endpoint overrides used by the tests: `MCP_AZURE_DEVOPS_BASE_URL`
+(e.g. `http://localhost:8080/fakeorg/fakeproj/_apis`) and `MCP_GITHUB_API_URL`
+(e.g. `http://localhost:8080`).
 
 ## License
 

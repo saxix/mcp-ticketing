@@ -24,10 +24,12 @@ GITHUB_TOKEN = os.getenv("MCP_GITHUB_TOKEN", "")
 
 class GitHubClient:
     def __init__(self):
-        self.owner = GITHUB_OWNER
-        self.repo = GITHUB_REPO
-        self.token = GITHUB_TOKEN
-        self.base_url = f"https://api.github.com/repos/{self.owner}/{self.repo}"
+        self.owner = os.getenv("MCP_GITHUB_OWNER", GITHUB_OWNER)
+        self.repo = os.getenv("MCP_GITHUB_REPO", GITHUB_REPO)
+        self.token = os.getenv("MCP_GITHUB_TOKEN", GITHUB_TOKEN)
+        api_root = os.getenv("MCP_GITHUB_API_URL") or "https://api.github.com"
+        self.base_url = f"{api_root}/repos/{self.owner}/{self.repo}"
+        self.search_url = f"{api_root}/search/issues"
 
     @asynccontextmanager
     async def get_client(self):
@@ -41,11 +43,23 @@ class GitHubClient:
             "X-GitHub-Api-Version": "2022-11-28",
         }
 
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("location", "")
+            if "login" in location or "signin" in location:
+                httpx.Response(
+                    401,
+                    request=response.request,
+                    text="authentication failed (redirect to login) — check token/owner/repo",
+                ).raise_for_status()
+        response.raise_for_status()
+
     async def get(self, path: str, params: dict | None = None) -> Any:
         url = f"{self.base_url}/{path}"
         async with self.get_client() as client:
             response = await client.get(url, headers=self._headers(), params=params)
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def post(
@@ -57,7 +71,7 @@ class GitHubClient:
         url = f"{self.base_url}/{path}"
         async with self.get_client() as client:
             response = await client.post(url, headers=self._headers(), json=data, params=params)
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def patch(
@@ -69,18 +83,17 @@ class GitHubClient:
         url = f"{self.base_url}/{path}"
         async with self.get_client() as client:
             response = await client.patch(url, headers=self._headers(), json=data, params=params)
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def search(self, query: str, params: dict | None = None) -> Any:
-        url = "https://api.github.com/search/issues"
         search_params = {
             "q": f"{query} repo:{self.owner}/{self.repo}",
             **(params or {}),
         }
         async with self.get_client() as client:
-            response = await client.get(url, headers=self._headers(), params=search_params)
-            response.raise_for_status()
+            response = await client.get(self.search_url, headers=self._headers(), params=search_params)
+            self._raise_for_status(response)
             return response.json()
 
 

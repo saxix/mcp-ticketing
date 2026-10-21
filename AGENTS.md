@@ -54,6 +54,25 @@ Required env vars (load via `.env` or direnv):
 | `MCP_GITHUB_OWNER` | GitHub owner (user or org) |
 | `MCP_GITHUB_REPO` | GitHub repository name |
 | `MCP_GITHUB_TOKEN` | GitHub Personal Access Token (scope: repo/issues) |
+| `MCP_AZURE_DEVOPS_BASE_URL` | Optional. Override the Azure API base URL (tests: fake server) |
+| `MCP_GITHUB_API_URL` | Optional. Override the GitHub API root (tests: fake server) |
+
+## Testing
+
+Three tiers, all run through tox:
+
+| Command | What it runs | Network / Docker |
+|---------|--------------|------------------|
+| `tox -e test` (default) | unit + `respx` contract tests, with coverage (95% gate) | none |
+| `tox -e integration` | `tests/test_integration_fake.py` against docker-compose fake servers | Docker |
+| `tox -e coverage` | combined coverage of unit + integration (95% gate) | Docker |
+| `tox -e test-live` | real Azure DevOps / GitHub APIs (needs `.envrc`) | live credentials |
+
+- Markers `live` and `integration`; `addopts` excludes both from the default run.
+- Contract tests mock HTTP with `respx` (`tests/test_azure_contract.py`, `tests/test_github_contract.py`).
+- Integration tests use a dependency-free stateful fake (`tests/fakes/`: ASGI app + in-memory store), served by uvicorn via `tests/docker/`.
+- The fake server exposes `GET /healthz` and serves both APIs on one port (Azure under `/{org}/{project}/_apis`, GitHub under `/repos/{owner}/{repo}` and `/search/issues`).
+- New MCP behavior must be covered by a respx contract test; add an integration test only when stateful round-trips matter.
 
 ## Code Conventions
 

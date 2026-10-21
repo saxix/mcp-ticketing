@@ -29,10 +29,12 @@ COMMENT_API_VERSION = "7.1-preview.3"
 
 class AzdoClient:
     def __init__(self):
-        self.org = AZDO_ORG
-        self.project = AZDO_PROJECT
-        self.pat = AZDO_PAT
-        self.base_url = f"https://dev.azure.com/{self.org}/{self.project}/_apis"
+        self.org = os.getenv("MCP_AZURE_DEVOPS_ORG", AZDO_ORG)
+        self.project = os.getenv("MCP_AZURE_DEVOPS_PROJECT", AZDO_PROJECT)
+        self.pat = os.getenv("MCP_AZDO_PAT", AZDO_PAT)
+        self.base_url = (
+            os.getenv("MCP_AZURE_DEVOPS_BASE_URL") or f"https://dev.azure.com/{self.org}/{self.project}/_apis"
+        )
 
     @asynccontextmanager
     async def get_client(self):
@@ -41,6 +43,18 @@ class AzdoClient:
 
     def _auth(self) -> tuple[str, str]:
         return ("", self.pat)
+
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("location", "")
+            if "login" in location or "spsprod" in location or "signin" in location:
+                httpx.Response(
+                    401,
+                    request=response.request,
+                    text="authentication failed (redirect to login) — check PAT/org/project",
+                ).raise_for_status()
+        response.raise_for_status()
 
     async def get(self, path: str, params: dict | None = None) -> dict[str, Any]:
         url = f"{self.base_url}/{path}"
@@ -51,7 +65,7 @@ class AzdoClient:
                 headers={"Accept": "application/json"},
                 params=params,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def post(
@@ -70,7 +84,7 @@ class AzdoClient:
                 json=data,
                 params=params,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def patch(
@@ -89,7 +103,7 @@ class AzdoClient:
                 json=data,
                 params=params,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def post_bytes(
@@ -108,7 +122,7 @@ class AzdoClient:
                 content=data,
                 params=params,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
 
@@ -221,9 +235,9 @@ class AzureConnector(TicketProtocol):
                 {
                     "status": "ok",
                     "backend": "azure",
-                    "organization": AZDO_ORG,
-                    "project": AZDO_PROJECT,
-                    "message": f"Connection to Azure DevOps '{AZDO_ORG}/{AZDO_PROJECT}' OK.",
+                    "organization": self.client.org,
+                    "project": self.client.project,
+                    "message": (f"Connection to Azure DevOps '{self.client.org}/{self.client.project}' OK."),
                 },
                 ensure_ascii=False,
             )
@@ -408,7 +422,7 @@ class AzureConnector(TicketProtocol):
 
         attachment_id = attachment.get("id")
         url = attachment.get("url", "") or (
-            f"https://dev.azure.com/{AZDO_ORG}/{AZDO_PROJECT}/_apis/wit/attachments/{attachment_id}"
+            f"https://dev.azure.com/{self.client.org}/{self.client.project}/_apis/wit/attachments/{attachment_id}"
         )
 
         label = title or "Mermaid diagram"
@@ -489,25 +503,21 @@ class AzureConnector(TicketProtocol):
             iteration_path: Iteration path (defaults to project iteration)
         """
         if not ticket_type:
+            names: list[str] = []
             try:
                 types_data = await self.client.get("wit/workitemtypes", params={"api-version": API_VERSION})
                 types = types_data.get("workItemTypes", types_data.get("value", []))
                 names = [t.get("name") for t in types if t.get("name")]
-                return json.dumps(
-                    {
-                        "error": "ticket_type is required but was not provided.",
-                        "available_types": names,
-                        "message": "Please specify a valid ticket_type from the list above.",
-                    },
-                    ensure_ascii=False,
-                )
-            except httpx.HTTPStatusError as e:
-                return json.dumps(
-                    {
-                        "error": f"HTTP {e.response.status_code}: {e.response.text}",
-                        "message": "Could not fetch available ticket types.",
-                    }
-                )
+            except httpx.HTTPError:
+                logger.warning("Could not fetch available ticket types; returning empty list.")
+            return json.dumps(
+                {
+                    "error": "ticket_type is required but was not provided.",
+                    "available_types": names,
+                    "message": "Please specify a valid ticket_type from the list above.",
+                },
+                ensure_ascii=False,
+            )
 
         if not title:
             return json.dumps({"error": "title is required."})
@@ -561,7 +571,7 @@ class AzureConnector(TicketProtocol):
                     "id": ticket_id,
                     "title": title,
                     "type": ticket_type,
-                    "url": f"https://dev.azure.com/{AZDO_ORG}/{AZDO_PROJECT}/_workitems/edit/{ticket_id}",
+                    "url": f"https://dev.azure.com/{self.client.org}/{self.client.project}/_workitems/edit/{ticket_id}",
                     "message": f"Ticket #{ticket_id} created successfully.",
                 }
             )
@@ -839,7 +849,7 @@ class AzureConnector(TicketProtocol):
                 "path": "/relations/-",
                 "value": {
                     "rel": link_type,
-                    "url": f"https://dev.azure.com/{AZDO_ORG}/{AZDO_PROJECT}/_apis/wit/workItems/{target_id}",
+                    "url": f"https://dev.azure.com/{self.client.org}/{self.client.project}/_apis/wit/workItems/{target_id}",
                     **({"comment": comment} if comment else {}),
                 },
             }

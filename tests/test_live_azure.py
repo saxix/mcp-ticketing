@@ -10,6 +10,7 @@ from mcp_ticketing.azure_connector import AzureConnector
 from mcp_ticketing.ticket_manager import TicketManager
 
 pytestmark = [
+    pytest.mark.live,
     pytest.mark.asyncio,
     pytest.mark.skipif(
         not all(

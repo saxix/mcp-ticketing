@@ -21,7 +21,7 @@ Repository = "https://github.com/saxix/mcp-ticketing"
 Documentation = "https://saxix.github.io/mcp-ticketing/"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -36,9 +36,11 @@ dev = [
     "pre-commit>=4.2",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=6",
     "properdocs>=1.2",
     "properdocs-theme-mkdocs>=1.6",
     "pymdown-extensions>=11.0.2",
+    "respx>=0.22",
     "ruff>=0.11",
     "tox>=4.25",
     "tox-uv>=1.25",
@@ -76,7 +78,25 @@ ignore_missing_imports = true
 exclude = ["tests/"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
+asyncio_mode = "strict"
+addopts = "-m 'not live and not integration'"
+markers = [
+    "live: tests that call the real Azure DevOps / GitHub APIs (opt-in: pytest -m live)",
+    "integration: tests that require the docker-compose fake servers (tox -e integration)",
+]
+
+[tool.coverage.run]
+source = ["mcp_ticketing"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
 
 [project.scripts]
 mcp-ticketing = "mcp_ticketing.main:main"
