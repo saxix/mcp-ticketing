@@ -1,0 +1,17 @@
+{
+  "priorities": {
+    "urgent": ["urgent", "urgente", "immediat"],
+    "high": ["high", "alta", "elevat"],
+    "normal": ["normal", "normale", "media", "medio"],
+    "low": ["low", "bassa", "basso"]
+  },
+  "states": {
+    "open": ["New", "In progress", "Reopened", "Nuova", "In lavorazione", "Riaperta", "Aperta"],
+    "active": ["In progress", "New", "Reopened", "In lavorazione", "Nuova", "Aperta"],
+    "closed": ["Closed", "Done", "Resolved", "Chiusa", "Completata", "Risolta"],
+    "resolved": ["Resolved", "Closed", "Done", "Risolta", "Chiusa", "Completata"],
+    "done": ["Done", "Closed", "Completata", "Chiusa"],
+    "new": ["New", "Nuova"],
+    "reopened": ["Reopened", "Riaperta"]
+  }
+}

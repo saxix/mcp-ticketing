@@ -20,6 +20,7 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
+from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 
 if TYPE_CHECKING:
@@ -50,6 +51,11 @@ CLI_ENV_MAP: dict[str, dict[str, str]] = {
         "repo": "MCP_GITHUB_REPO",
         "token": "MCP_GITHUB_TOKEN",
     },
+    "redmine": {
+        "owner": "MCP_REDMINE_URL",
+        "repo": "MCP_REDMINE_PROJECT",
+        "token": "MCP_REDMINE_API_KEY",
+    },
 }
 
 
@@ -60,7 +66,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         prog="mcp-ticketing",
-        description="MCP server for Azure DevOps and GitHub Issues ticketing.",
+        description="MCP server for Azure DevOps, GitHub Issues and Redmine ticketing.",
     )
     parser.add_argument(
         "backend",
@@ -74,9 +80,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Verify the connection and credentials, then exit without starting the server.",
     )
-    parser.add_argument("--owner", help="Owner/org override for the selected backend.")
-    parser.add_argument("--repo", help="Project/repo override for the selected backend.")
-    parser.add_argument("--token", help="Token override for the selected backend.")
+    parser.add_argument("--owner", help="Owner/org override (instance base URL for Redmine).")
+    parser.add_argument("--repo", help="Project/repo override (project identifier for Redmine).")
+    parser.add_argument("--token", help="Token override (API key for Redmine).")
     return parser.parse_args(argv)
 
 
@@ -96,6 +102,22 @@ def _apply_cli_env(args: argparse.Namespace) -> None:
             os.environ[backend_map[flag]] = value
 
 
+async def _warmup_redmine_profile() -> None:
+    """Select the Redmine version profile at startup (fail-fast, no network).
+
+    For the Redmine backend this resolves ``MCP_REDMINE_VERSION`` to a
+    profile (latest profile when unset) so an invalid or unsupported
+    *declared* version is reported *before* the MCP server starts, not on
+    the first tool call. No server round-trip is performed: deployments
+    that do not expose the version (no ``X-Redmine-Version`` header) are
+    the rule, so the operator declares it.
+    """
+    from mcp_ticketing.redmine.connector import RedmineConnector
+
+    connector = RedmineConnector()
+    await connector._ensure_profile()
+
+
 def _resolve(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse argv, apply the CLI environment overrides, and build the TicketManager."""
     global manager
@@ -104,9 +126,22 @@ def _resolve(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = _parse_args(list(argv))
     _apply_cli_env(args)
 
+    # Load .env from the composition root so the CLI overrides above take
+    # precedence (already pushed into the environment). The Redmine connector
+    # reads its configuration at construction time, not at import time.
+    load_dotenv()
+
     from mcp_ticketing.ticket_manager import TicketManager
 
     manager = TicketManager(strategy=args.backend)
+
+    if args.backend == "redmine":
+        try:
+            asyncio.run(_warmup_redmine_profile())
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"error": str(exc)}))
+            sys.exit(1)
+
     return args
 
 
@@ -164,13 +199,16 @@ async def add_mermaid(
     under the given ``section`` heading (default 'Diagrams').\n
     Azure: the diagram is rendered locally to a high-resolution PNG
     (via the bundled ``mermaidx`` engine) and attached to the work item
-    as an AttachedFile relation. ``section`` is ignored on Azure.
+    as an AttachedFile relation. ``section`` is ignored on Azure.\n
+    Redmine: the diagram is rendered locally to a high-resolution PNG
+    (same engine as Azure), attached to the issue, and embedded in the
+    description with an ``<img>`` tag. ``section`` is ignored on Redmine.
 
     Args:
         ticket_id: ID of the ticket (work item ID or issue number)
         diagram: Mermaid diagram source (e.g. "flowchart TD\\n  A[Start] --> B[End]")
         title: Optional label. GitHub: heading above the diagram;
-            Azure: attachment label.
+            Azure: attachment label; Redmine: image caption.
         section: Section heading used by GitHub (default 'Diagrams')
     """
     assert manager is not None
@@ -189,6 +227,7 @@ async def add_ticket_image(ticket_id: int, image_path: str, comment: str = "") -
             GitHub: text above the image in a new issue comment
             (images are uploaded into the repo and referenced via
             Markdown).
+            Redmine: note appended to the issue together with the attachment.
     """
     assert manager is not None
     return await manager.add_ticket_image(ticket_id, image_path, comment)
@@ -215,12 +254,16 @@ async def create_ticket(
             'Issue', 'Change Request').
             Leave empty to retrieve available types.
         title: Ticket title
-        description: HTML description (Azure) or Markdown body (GitHub) of the ticket
-        assigned_to: Assignee display name (Azure) or username (GitHub)
+        description: HTML description (Azure/Redmine) or Markdown body (GitHub) of the ticket
+        assigned_to: Assignee display name (Azure), username (GitHub)
+            or login/full name (Redmine)
         priority: Priority (1-4)
-        tags: Semicolon-separated tags (Azure) or labels (GitHub)
-        area_path: Area path (Azure; defaults to project area). Ignored for GitHub.
+        tags: Semicolon-separated tags (Azure) or labels (GitHub).
+            Ignored for Redmine.
+        area_path: Area path (Azure; defaults to project area).
+            Ignored for GitHub and Redmine.
         iteration_path: Iteration path (Azure) or milestone title (GitHub)
+            or version name (Redmine)
     """
     assert manager is not None
     return await manager.create_ticket(
@@ -252,13 +295,16 @@ async def update_ticket(
     Args:
         ticket_id: ID of the ticket to update
         title: New title
-        description: New description (HTML for Azure, Markdown for GitHub)
+        description: New description (HTML for Azure/Redmine, Markdown for GitHub)
         assigned_to: New assignee (leave empty to remove)
-        state: New state (Azure: 'Active', 'Closed', 'Resolved'; GitHub: 'open', 'closed')
+        state: New state (Azure: 'Active', 'Closed', 'Resolved'; GitHub: 'open', 'closed';
+            Redmine: status name or generic word open/active/resolved/closed/done)
         priority: New priority (1-4)
-        tags: New semicolon-separated tags (Azure) or labels (GitHub)
-        area_path: New area path (Azure). Ignored for GitHub.
-        iteration_path: New iteration path (Azure) or milestone title (GitHub)
+        tags: New semicolon-separated tags (Azure) or labels (GitHub).
+            Ignored for Redmine.
+        area_path: New area path (Azure). Ignored for GitHub and Redmine.
+        iteration_path: New iteration path (Azure), milestone title (GitHub)
+            or version name (Redmine)
     """
     assert manager is not None
     return await manager.update_ticket(
@@ -295,14 +341,20 @@ async def search_tickets(
     If 'query' is provided, filters are ignored (Azure) or appended (GitHub).
 
     Args:
-        query: Custom WIQL query (Azure) or search query (GitHub, e.g. "is:open bug")
+        query: Custom WIQL query (Azure), search query (GitHub, e.g. "is:open bug")
+            or free-text on subject/description (Redmine)
         ticket_type: Ticket type filter (ignored for GitHub)
-        state: Ticket state (Azure: 'Active', 'New', 'Closed'; GitHub: 'open', 'closed')
-        assigned_to: Assignee display name (Azure) or username (GitHub)
-        tags: Semicolon-separated tags (Azure) or labels (GitHub) to filter by
-        area_path: Area path filter (Azure). Ignored for GitHub.
-        iteration_path: Iteration path filter (Azure) or milestone title (GitHub)
-        max_results: Maximum results (Azure default 20 / max 200, GitHub default 20 / max 100)
+        state: Ticket state (Azure: 'Active', 'New', 'Closed'; GitHub: 'open', 'closed';
+            Redmine: status name or generic word)
+        assigned_to: Assignee display name (Azure), username (GitHub)
+            or login/full name (Redmine)
+        tags: Semicolon-separated tags (Azure) or labels (GitHub) to filter by.
+            Ignored for Redmine.
+        area_path: Area path filter (Azure). Ignored for GitHub and Redmine.
+        iteration_path: Iteration path filter (Azure), milestone title (GitHub)
+            or version name (Redmine)
+        max_results: Maximum results (Azure default 20 / max 200,
+            GitHub and Redmine default 20 / max 100)
     """
     assert manager is not None
     return await manager.search_tickets(
@@ -346,7 +398,9 @@ async def link_tickets(
             - 'System.LinkTypes.Hierarchy-Forward' = Child (source -> target as parent of target)
             - 'System.LinkTypes.Related' = Related
             Ignored for GitHub (always adds a cross-reference).
-        comment: Optional comment on the link
+            Redmine: one of 'relates to' (default), 'blocks', 'is blocked by',
+            'duplicates', 'is duplicated by', 'copied from', 'copied to'.
+        comment: Optional comment on the link (Redmine: appended as a note)
     """
     assert manager is not None
     return await manager.link_tickets(
@@ -359,7 +413,7 @@ async def link_tickets(
 
 @mcp.tool()
 async def get_ticket_relations(ticket_id: int) -> str:
-    """Retrieve all links/relations (Azure) or cross-references and linked PRs (GitHub) of a ticket."""
+    """Retrieve all links/relations (Azure, Redmine) or cross-references and linked PRs (GitHub) of a ticket."""
     assert manager is not None
     return await manager.get_ticket_relations(ticket_id)
 
@@ -371,18 +425,19 @@ async def get_ticket_relations(ticket_id: int) -> str:
 
 @mcp.tool()
 async def get_iterations() -> str:
-    """Retrieve all iterations/sprints (Azure) or milestones (GitHub) from the project."""
+    """Retrieve all iterations/sprints (Azure) or milestones (GitHub) or versions (Redmine) from the project."""
     assert manager is not None
     return await manager.get_iterations()
 
 
 @mcp.tool()
 async def move_to_iteration(ticket_id: int, iteration_path: str) -> str:
-    """Move a ticket to a different iteration/sprint (Azure) or milestone (GitHub).
+    """Move a ticket to a different iteration/sprint (Azure), milestone (GitHub) or version (Redmine).
 
     Args:
         ticket_id: ID of the ticket to move
-        iteration_path: Full iteration path (e.g. 'Project\\Sprint 1') or milestone title
+        iteration_path: Full iteration path (e.g. 'Project\\Sprint 1'), milestone title
+            or version name (Redmine)
     """
     assert manager is not None
     return await manager.move_to_iteration(ticket_id, iteration_path)
@@ -390,7 +445,7 @@ async def move_to_iteration(ticket_id: int, iteration_path: str) -> str:
 
 @mcp.tool()
 async def get_area_paths() -> str:
-    """Retrieve all area paths (Azure) or labels (GitHub) from the project."""
+    """Retrieve all area paths (Azure), labels (GitHub) or issue trackers (Redmine) from the project."""
     assert manager is not None
     return await manager.get_area_paths()
 
