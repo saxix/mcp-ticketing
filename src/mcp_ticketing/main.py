@@ -102,6 +102,7 @@ def _resolve(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if argv is None:
         argv = sys.argv[1:]
     args = _parse_args(list(argv))
+
     _apply_cli_env(args)
 
     from mcp_ticketing.ticket_manager import TicketManager

@@ -12,6 +12,14 @@ uv run mcp-ticketing github --check   # verify credentials and exit
 - Package manager: `uv`
 - Single entrypoint `mcp-ticketing <backend>` (backend chosen via CLI argument)
 
+## Project context
+
+Project-specific rules live in `.ai/`. Read only the files relevant to the current task and resolve them per this contract.
+
+- `.ai/project.md` -- product, repo layout, branch and deploy model
+- `.ai/architecture.md` -- boundaries, entrypoints, data flow
+- `.ai/technical.md` -- language, versions, commands, toolchain
+
 ## Architecture
 
 - **Package**: `src/mcp_ticketing/` — all logic lives here
