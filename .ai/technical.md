@@ -42,3 +42,9 @@ Test runner, fixtures, coverage, CI
 - Contract tests: `respx` (mock HTTP), `tests/test_azure_contract.py`, `tests/test_github_contract.py`
 - Integration fake: ASGI app + in-memory store in `tests/fakes/`, served by uvicorn via `tests/docker/`
 - Live tests: `tox -e test-live` (requires `.envrc` with real credentials)
+
+
+Any change to the code must be
+- Formatted with `.venv/bin/ruff format`
+- Checked with `tox -e lint -e typecheck`
+- Tested with `tox -e tests`

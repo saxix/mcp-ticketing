@@ -17,6 +17,7 @@ uv run mcp-ticketing github --check   # verify credentials and exit
 Project-specific rules live in `.ai/`. Read only the files relevant to the current task and resolve them per this contract.
 
 - `.ai/project.md` -- product, repo layout, branch and deploy model
+- `.ai/patterns.md` -- implementation design patterns
 - `.ai/architecture.md` -- boundaries, entrypoints, data flow
 - `.ai/technical.md` -- language, versions, commands, toolchain
 
